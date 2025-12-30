@@ -1,0 +1,32 @@
+[package]
+name = "burn-mlx"
+version = "0.1.0"
+edition = "2021"
+authors = ["TuringWorks"]
+description = "MLX backend for Burn deep learning framework - native Apple Silicon GPU acceleration"
+license = "Apache-2.0"
+repository = "https://github.com/TuringWorks/burn-mlx"
+homepage = "https://github.com/TuringWorks/burn-mlx"
+documentation = "https://docs.rs/burn-mlx"
+readme = "README.md"
+keywords = ["burn", "mlx", "apple-silicon", "machine-learning", "gpu"]
+categories = ["science::ml", "algorithms"]
+
+[features]
+default = []
+# Fusion optimization (combining multiple operations)
+fusion = []
+# Autodiff support
+autotune = []
+
+[dependencies]
+burn = { version = "0.16", default-features = false, features = ["std"] }
+burn-tensor = "0.16"
+mlx-rs = "0.25"
+derive-new = "0.7"
+half = { version = "2.4", features = ["num-traits"] }
+num-traits = "0.2"
+
+[dev-dependencies]
+burn = { version = "0.16", features = ["train", "dataset"] }
+serial_test = "3.2"
