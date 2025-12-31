@@ -1,16 +1,22 @@
 [package]
 name = "burn-mlx"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["TuringWorks"]
 description = "MLX backend for Burn deep learning framework - native Apple Silicon GPU acceleration"
 license = "Apache-2.0"
 repository = "https://github.com/TuringWorks/burn-mlx"
 homepage = "https://github.com/TuringWorks/burn-mlx"
-documentation = "https://docs.rs/burn-mlx"
+documentation = "https://github.com/TuringWorks/burn-mlx#readme"
 readme = "README.md"
 keywords = ["burn", "mlx", "apple-silicon", "machine-learning", "gpu"]
 categories = ["science", "algorithms"]
+
+[package.metadata.docs.rs]
+# docs.rs cannot build this crate (requires macOS + Apple Silicon)
+# Point users to the README for documentation
+targets = ["aarch64-apple-darwin"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
