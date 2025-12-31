@@ -1,6 +1,6 @@
 [package]
 name = "burn-mlx"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["TuringWorks"]
 description = "MLX backend for Burn deep learning framework - native Apple Silicon GPU acceleration"
@@ -22,7 +22,7 @@ autotune = []
 [dependencies]
 burn = { version = "0.16", default-features = false, features = ["std"] }
 burn-tensor = "0.16"
-mlx-rs = { package = "mlx-rs-burn", version = "0.25.4" }
+mlx-rs = { package = "mlx-rs-burn", version = "0.25.5" }
 derive-new = "0.7"
 half = { version = "2.4", features = ["num-traits"] }
 num-traits = "0.2"
