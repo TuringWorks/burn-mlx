@@ -158,8 +158,10 @@ impl IntTensorOps<Self> for Mlx {
     }
 
     fn int_flip(tensor: MlxTensorPrimitive, axes: &[usize]) -> MlxTensorPrimitive {
-        // Placeholder - MLX doesn't have direct flip
-        tensor
+        let axes_i32: Vec<i32> = axes.iter().map(|&a| a as i32).collect();
+        let array = mlx_rs::ops::flip(&tensor.array, &axes_i32[..])
+            .expect("Failed to flip");
+        MlxTensorPrimitive::new(array)
     }
 
     fn int_reshape(tensor: MlxTensorPrimitive, shape: Shape) -> MlxTensorPrimitive {
@@ -169,11 +171,11 @@ impl IntTensorOps<Self> for Mlx {
     }
 
     fn int_slice(tensor: MlxTensorPrimitive, ranges: &[Range<usize>]) -> MlxTensorPrimitive {
-        // Use Array slicing method
         let starts: Vec<i32> = ranges.iter().map(|r| r.start as i32).collect();
-        let ends: Vec<i32> = ranges.iter().map(|r| r.end as i32).collect();
-        // Placeholder - need proper slice implementation
-        tensor
+        let stops: Vec<i32> = ranges.iter().map(|r| r.end as i32).collect();
+        let array = mlx_rs::ops::slice(&tensor.array, &starts, &stops, None)
+            .expect("Failed to slice");
+        MlxTensorPrimitive::new(array)
     }
 
     fn int_slice_assign(
@@ -181,7 +183,11 @@ impl IntTensorOps<Self> for Mlx {
         ranges: &[Range<usize>],
         value: MlxTensorPrimitive,
     ) -> MlxTensorPrimitive {
-        tensor
+        let starts: Vec<i32> = ranges.iter().map(|r| r.start as i32).collect();
+        let stops: Vec<i32> = ranges.iter().map(|r| r.end as i32).collect();
+        let array = mlx_rs::ops::slice_update(&tensor.array, &value.array, &starts, &stops, None)
+            .expect("Failed to slice_assign");
+        MlxTensorPrimitive::new(array)
     }
 
     fn int_mask_where(
@@ -210,7 +216,10 @@ impl IntTensorOps<Self> for Mlx {
     }
 
     fn int_scatter(dim: usize, tensor: MlxTensorPrimitive, indices: MlxTensorPrimitive, value: MlxTensorPrimitive) -> MlxTensorPrimitive {
-        tensor
+        // Use put_along_axis for scatter operation
+        let array = tensor.array.put_along_axis(&indices.array, &value.array, dim as i32)
+            .expect("Failed to scatter");
+        MlxTensorPrimitive::new(array)
     }
 
     fn int_select(tensor: MlxTensorPrimitive, dim: usize, indices: MlxTensorPrimitive) -> MlxTensorPrimitive {
@@ -219,7 +228,10 @@ impl IntTensorOps<Self> for Mlx {
     }
 
     fn int_select_assign(tensor: MlxTensorPrimitive, dim: usize, indices: MlxTensorPrimitive, value: MlxTensorPrimitive) -> MlxTensorPrimitive {
-        tensor
+        // Use put_along_axis for select_assign operation
+        let array = tensor.array.put_along_axis(&indices.array, &value.array, dim as i32)
+            .expect("Failed to select_assign");
+        MlxTensorPrimitive::new(array)
     }
 
     fn int_equal(lhs: MlxTensorPrimitive, rhs: MlxTensorPrimitive) -> MlxTensorPrimitive {

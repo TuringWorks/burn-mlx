@@ -180,10 +180,11 @@ impl FloatTensorOps<Self> for Mlx {
         MlxTensorPrimitive::new(array)
     }
 
-    fn float_flip(tensor: MlxTensorPrimitive, _axes: &[usize]) -> MlxTensorPrimitive {
-        // MLX doesn't have direct flip - use indexing
-        // Placeholder: return tensor as-is for now
-        tensor
+    fn float_flip(tensor: MlxTensorPrimitive, axes: &[usize]) -> MlxTensorPrimitive {
+        let axes_i32: Vec<i32> = axes.iter().map(|&a| a as i32).collect();
+        let array = mlx_rs::ops::flip(&tensor.array, &axes_i32[..])
+            .expect("Failed to flip");
+        MlxTensorPrimitive::new(array)
     }
 
     fn float_reshape(tensor: MlxTensorPrimitive, shape: Shape) -> MlxTensorPrimitive {
@@ -203,13 +204,15 @@ impl FloatTensorOps<Self> for Mlx {
     }
 
     fn float_scatter(
-        _dim: usize,
+        dim: usize,
         tensor: MlxTensorPrimitive,
-        _indices: MlxTensorPrimitive,
-        _value: MlxTensorPrimitive,
+        indices: MlxTensorPrimitive,
+        value: MlxTensorPrimitive,
     ) -> MlxTensorPrimitive {
-        // Placeholder - needs proper scatter implementation
-        tensor
+        // Use put_along_axis for scatter operation
+        let array = tensor.array.put_along_axis(&indices.array, &value.array, dim as i32)
+            .expect("Failed to scatter");
+        MlxTensorPrimitive::new(array)
     }
 
     fn float_select(
@@ -224,27 +227,34 @@ impl FloatTensorOps<Self> for Mlx {
 
     fn float_select_assign(
         tensor: MlxTensorPrimitive,
-        _dim: usize,
-        _indices: MlxTensorPrimitive,
-        _value: MlxTensorPrimitive,
+        dim: usize,
+        indices: MlxTensorPrimitive,
+        value: MlxTensorPrimitive,
     ) -> MlxTensorPrimitive {
-        // Placeholder
-        tensor
+        // Use put_along_axis for select_assign operation
+        let array = tensor.array.put_along_axis(&indices.array, &value.array, dim as i32)
+            .expect("Failed to select_assign");
+        MlxTensorPrimitive::new(array)
     }
 
-    fn float_slice(tensor: MlxTensorPrimitive, _ranges: &[Range<usize>]) -> MlxTensorPrimitive {
-        // MLX doesn't have direct slice - would need to implement via indexing
-        // Placeholder: return tensor as-is for now
-        tensor
+    fn float_slice(tensor: MlxTensorPrimitive, ranges: &[Range<usize>]) -> MlxTensorPrimitive {
+        let starts: Vec<i32> = ranges.iter().map(|r| r.start as i32).collect();
+        let stops: Vec<i32> = ranges.iter().map(|r| r.end as i32).collect();
+        let array = mlx_rs::ops::slice(&tensor.array, &starts, &stops, None)
+            .expect("Failed to slice");
+        MlxTensorPrimitive::new(array)
     }
 
     fn float_slice_assign(
         tensor: MlxTensorPrimitive,
-        _ranges: &[Range<usize>],
-        _value: MlxTensorPrimitive,
+        ranges: &[Range<usize>],
+        value: MlxTensorPrimitive,
     ) -> MlxTensorPrimitive {
-        // Placeholder
-        tensor
+        let starts: Vec<i32> = ranges.iter().map(|r| r.start as i32).collect();
+        let stops: Vec<i32> = ranges.iter().map(|r| r.end as i32).collect();
+        let array = mlx_rs::ops::slice_update(&tensor.array, &value.array, &starts, &stops, None)
+            .expect("Failed to slice_assign");
+        MlxTensorPrimitive::new(array)
     }
 
     fn float_mask_where(

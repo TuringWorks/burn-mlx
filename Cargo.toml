@@ -22,7 +22,7 @@ autotune = []
 [dependencies]
 burn = { version = "0.16", default-features = false, features = ["std"] }
 burn-tensor = "0.16"
-mlx-rs = "0.25"
+mlx-rs = { git = "https://github.com/TuringWorks/mlx-rs.git", branch = "feat/add-slice-scatter-flip" }
 derive-new = "0.7"
 half = { version = "2.4", features = ["num-traits"] }
 num-traits = "0.2"
