@@ -26,13 +26,13 @@ fusion = []
 autotune = []
 
 [dependencies]
-burn = { version = "0.16", default-features = false, features = ["std"] }
-burn-tensor = "0.16"
+burn = { version = "0.20", default-features = false, features = ["std"] }
+burn-tensor = "0.20"
 mlx-rs = { package = "mlx-rs-burn", version = "0.25.5" }
 derive-new = "0.7"
 half = { version = "2.4", features = ["num-traits"] }
 num-traits = "0.2"
 
 [dev-dependencies]
-burn = { version = "0.16", features = ["train", "dataset"] }
+burn = { version = "0.20", features = ["train", "dataset"] }
 serial_test = "3.2"

@@ -65,7 +65,7 @@ pub mod mlx {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn_tensor::{backend::Backend, Tensor, TensorData, Shape};
+    use burn_tensor::{Tensor, TensorData, Shape};
 
     #[test]
     fn test_device_creation() {
@@ -169,6 +169,7 @@ mod tests {
             [2, 2],
             [0, 0],
             true,
+            false,
         );
 
         let shape = pooled.shape();
@@ -195,6 +196,7 @@ mod tests {
             [2, 2],
             [0, 0],
             [1, 1],
+            false,
         );
 
         let shape = pooled.shape();
@@ -221,6 +223,7 @@ mod tests {
             [2, 2],
             [0, 0],
             [1, 1],
+            false,
         );
 
         let output_shape = result.output.shape();
@@ -250,6 +253,7 @@ mod tests {
             2,
             0,
             true,
+            false,
         );
 
         let shape = pooled.shape();
@@ -276,6 +280,7 @@ mod tests {
             2,
             0,
             1,
+            false,
         );
 
         let shape = pooled.shape();

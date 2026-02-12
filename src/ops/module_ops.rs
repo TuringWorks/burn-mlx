@@ -184,17 +184,6 @@ fn max_pool2d_with_indices_impl(
     let local_indices = mlx_rs::ops::indexing::argmax_axis(&reshaped, 3, None).expect("argmax");
 
     // Convert local indices (within kernel) to flat indices into padded NHWC input
-    // For each output position (n, oh, ow, c), the local_idx tells us which element
-    // in the kH*kW kernel was the max.
-    //
-    // The actual position in the padded input (NHWC layout) is:
-    //   n * (H * W * C) + (oh * stride[0] + local_h) * (W * C) + (ow * stride[1] + local_w) * C + c
-    // where local_h = local_idx / kW, local_w = local_idx % kW
-    //
-    // We need to compute this index for the backward pass.
-
-    // Create coordinate arrays for output positions
-    // Shape of output/indices: [N, out_H, out_W, C]
     let out_h_size = out_h as usize;
     let out_w_size = out_w as usize;
     let n_size = n as usize;
@@ -203,22 +192,18 @@ fn max_pool2d_with_indices_impl(
     let w_size = w as usize;
 
     // Create index arrays for n, oh, ow, c dimensions
-    // n_idx: [N, 1, 1, 1] broadcast to [N, out_H, out_W, C]
     let n_range: Vec<i32> = (0..n_size as i32).collect();
     let n_idx = Array::from_slice(&n_range, &[n_size as i32])
         .reshape(&[n, 1, 1, 1]).expect("reshape");
 
-    // oh_idx: [1, out_H, 1, 1]
     let oh_range: Vec<i32> = (0..out_h_size as i32).collect();
     let oh_idx = Array::from_slice(&oh_range, &[out_h_size as i32])
         .reshape(&[1, out_h, 1, 1]).expect("reshape");
 
-    // ow_idx: [1, 1, out_W, 1]
     let ow_range: Vec<i32> = (0..out_w_size as i32).collect();
     let ow_idx = Array::from_slice(&ow_range, &[out_w_size as i32])
         .reshape(&[1, 1, out_w, 1]).expect("reshape");
 
-    // c_idx: [1, 1, 1, C]
     let c_range: Vec<i32> = (0..c_size as i32).collect();
     let c_idx = Array::from_slice(&c_range, &[c_size as i32])
         .reshape(&[1, 1, 1, c]).expect("reshape");
@@ -232,13 +217,11 @@ fn max_pool2d_with_indices_impl(
     let sh_arr = Array::from_int(stride[0] as i32);
     let sw_arr = Array::from_int(stride[1] as i32);
 
-    // actual_h = oh * stride[0] + local_h
     let actual_h = mlx_rs::ops::add(
         &mlx_rs::ops::multiply(&oh_idx, &sh_arr).expect("mul"),
         &local_h
     ).expect("add");
 
-    // actual_w = ow * stride[1] + local_w
     let actual_w = mlx_rs::ops::add(
         &mlx_rs::ops::multiply(&ow_idx, &sw_arr).expect("mul"),
         &local_w
@@ -293,7 +276,6 @@ impl ModuleOps<Self> for Mlx {
 
         // Add bias if provided
         if let Some(b) = bias {
-            // Reshape bias from [C_out] to [1, C_out, 1]
             let b_shape = b.shape();
             let b_reshaped = b.array.reshape(&[1, b_shape[0] as i32, 1]).expect("reshape bias");
             output = mlx_rs::ops::add(&output, &b_reshaped).expect("add bias");
@@ -359,7 +341,6 @@ impl ModuleOps<Self> for Mlx {
         _bias: Option<MlxTensorPrimitive>,
         _options: ConvTransposeOptions<1>,
     ) -> MlxTensorPrimitive {
-        // conv_transpose1d is complex in MLX - placeholder
         x
     }
 
@@ -369,7 +350,6 @@ impl ModuleOps<Self> for Mlx {
         _bias: Option<MlxTensorPrimitive>,
         _options: ConvTransposeOptions<2>,
     ) -> MlxTensorPrimitive {
-        // conv_transpose2d is complex in MLX - placeholder
         x
     }
 
@@ -379,7 +359,6 @@ impl ModuleOps<Self> for Mlx {
         _bias: Option<MlxTensorPrimitive>,
         _options: ConvTransposeOptions<3>,
     ) -> MlxTensorPrimitive {
-        // Placeholder
         x
     }
 
@@ -391,7 +370,6 @@ impl ModuleOps<Self> for Mlx {
         _bias: Option<MlxTensorPrimitive>,
         _options: DeformConvOptions<2>,
     ) -> MlxTensorPrimitive {
-        // Deformable convolution is not supported in MLX - placeholder
         let shape = [1i32, 1, 1, 1];
         let array = Array::zeros::<f32>(&shape).expect("zeros");
         MlxTensorPrimitive::new(array)
@@ -406,7 +384,6 @@ impl ModuleOps<Self> for Mlx {
         _out_grad: MlxTensorPrimitive,
         _options: DeformConvOptions<2>,
     ) -> DeformConv2dBackward<Mlx> {
-        // Placeholder
         let shape = [1i32, 1, 1, 1];
         let zeros = MlxTensorPrimitive::new(Array::zeros::<f32>(&shape).expect("zeros"));
         DeformConv2dBackward::new(
@@ -424,16 +401,13 @@ impl ModuleOps<Self> for Mlx {
         stride: usize,
         padding: usize,
         _count_include_pad: bool,
+        _ceil_mode: bool,
     ) -> MlxTensorPrimitive {
         // Burn uses NCL format, MLX uses NLC format
-        // Transpose from [N, C, L] to [N, L, C]
         let x_nhwc = mlx_rs::ops::transpose_axes(&x.array, &[0, 2, 1]).expect("transpose");
 
-        // Apply padding if needed
         let x_padded = if padding > 0 {
             let pad = padding as i32;
-            // Pad only the L dimension (axis 1 in NLC format)
-            // PadWidth for [N, L, C]: [(0,0), (pad,pad), (0,0)]
             mlx_rs::ops::pad(
                 &x_nhwc,
                 &[(0, 0), (pad, pad), (0, 0)],
@@ -444,14 +418,11 @@ impl ModuleOps<Self> for Mlx {
             x_nhwc
         };
 
-        // Apply pooling using as_strided + mean_axes
         let pooled = pool1d_strided(&x_padded, kernel_size, stride, |arr, axes| {
             arr.mean_axes(axes, None)
         });
 
-        // Transpose back from [N, L, C] to [N, C, L]
         let output = mlx_rs::ops::transpose_axes(&pooled, &[0, 2, 1]).expect("transpose");
-
         MlxTensorPrimitive::new(output)
     }
 
@@ -461,17 +432,14 @@ impl ModuleOps<Self> for Mlx {
         stride: [usize; 2],
         padding: [usize; 2],
         _count_include_pad: bool,
+        _ceil_mode: bool,
     ) -> MlxTensorPrimitive {
         // Burn uses NCHW format, MLX uses NHWC format
-        // Transpose from [N, C, H, W] to [N, H, W, C]
         let x_nhwc = mlx_rs::ops::transpose_axes(&x.array, &[0, 2, 3, 1]).expect("transpose");
 
-        // Apply padding if needed
         let x_padded = if padding[0] > 0 || padding[1] > 0 {
             let pad_h = padding[0] as i32;
             let pad_w = padding[1] as i32;
-            // Pad H and W dimensions (axes 1 and 2 in NHWC format)
-            // PadWidth for [N, H, W, C]: [(0,0), (pad_h,pad_h), (pad_w,pad_w), (0,0)]
             mlx_rs::ops::pad(
                 &x_nhwc,
                 &[(0, 0), (pad_h, pad_h), (pad_w, pad_w), (0, 0)],
@@ -482,14 +450,11 @@ impl ModuleOps<Self> for Mlx {
             x_nhwc
         };
 
-        // Apply pooling using as_strided + mean_axes
         let pooled = pool2d_strided(&x_padded, kernel_size, stride, |arr, axes| {
             arr.mean_axes(axes, None)
         });
 
-        // Transpose back from [N, H, W, C] to [N, C, H, W]
         let output = mlx_rs::ops::transpose_axes(&pooled, &[0, 3, 1, 2]).expect("transpose");
-
         MlxTensorPrimitive::new(output)
     }
 
@@ -500,8 +465,8 @@ impl ModuleOps<Self> for Mlx {
         stride: [usize; 2],
         padding: [usize; 2],
         _count_include_pad: bool,
+        _ceil_mode: bool,
     ) -> MlxTensorPrimitive {
-        // Burn uses NCHW format
         let input_shape = x.shape();
         let n = input_shape[0];
         let c = input_shape[1];
@@ -515,24 +480,19 @@ impl ModuleOps<Self> for Mlx {
         let pad_h = padding[0];
         let pad_w = padding[1];
 
-        // Padded input dimensions
         let h_padded = h + 2 * pad_h;
         let w_padded = w + 2 * pad_w;
 
-        // Output dimensions
         let out_h = (h_padded - kh) / sh + 1;
         let out_w = (w_padded - kw) / sw + 1;
 
         let pool_size = (kh * kw) as f32;
 
-        // Transpose grad from NCHW to NHWC for processing
         let grad_nhwc = mlx_rs::ops::transpose_axes(&grad.array, &[0, 2, 3, 1]).expect("transpose");
 
-        // Scale gradient by 1/pool_size
         let scale = Array::from_f32(1.0 / pool_size);
         let grad_scaled = mlx_rs::ops::multiply(&grad_nhwc, &scale).expect("multiply");
 
-        // Create zeros for padded input gradient (NHWC format)
         let grad_input_padded = Array::zeros::<f32>(&[
             n as i32,
             h_padded as i32,
@@ -540,22 +500,7 @@ impl ModuleOps<Self> for Mlx {
             c as i32,
         ]).expect("zeros");
 
-        // For avg pooling backward, each output gradient contributes equally to all
-        // input positions in its window. We use scatter_add to accumulate gradients.
-        //
-        // For each output position (oh, ow), the window covers:
-        //   h_start = oh * stride[0]
-        //   w_start = ow * stride[1]
-        //   positions: (h_start..h_start+kH, w_start..w_start+kW)
-
-        // Create flat indices for all input positions that receive gradients
-        // We need to iterate over all output positions and all kernel positions
-
-        // Build index arrays
-        // For each (oh, ow, kh_off, kw_off), compute flat index into padded input
-
         let mut all_indices: Vec<i32> = Vec::with_capacity(n * out_h * out_w * kh * kw * c);
-        let mut all_n_indices: Vec<i32> = Vec::with_capacity(n * out_h * out_w * kh * kw * c);
         let mut update_indices: Vec<usize> = Vec::with_capacity(n * out_h * out_w * kh * kw * c);
 
         for ni in 0..n {
@@ -568,14 +513,11 @@ impl ModuleOps<Self> for Mlx {
                             let hi = h_start + khi;
                             let wi = w_start + kwi;
                             for ci in 0..c {
-                                // Flat index in NHWC layout
                                 let flat_idx = (ni * h_padded * w_padded * c
                                     + hi * w_padded * c
                                     + wi * c
                                     + ci) as i32;
                                 all_indices.push(flat_idx);
-                                all_n_indices.push(ni as i32);
-                                // Index into the flat grad_scaled array
                                 let grad_idx = ni * out_h * out_w * c
                                     + ohi * out_w * c
                                     + owi * c
@@ -588,7 +530,6 @@ impl ModuleOps<Self> for Mlx {
             }
         }
 
-        // Flatten the scaled gradient and gather the values we need
         let grad_flat = grad_scaled.flatten(None, None).expect("flatten");
         let update_idx_arr = Array::from_slice(
             &update_indices.iter().map(|&x| x as i32).collect::<Vec<_>>(),
@@ -596,11 +537,9 @@ impl ModuleOps<Self> for Mlx {
         );
         let updates = take_axis(&grad_flat, &update_idx_arr, 0).expect("take");
 
-        // Flatten the input gradient and use scatter_add
         let grad_input_flat = grad_input_padded.flatten(None, None).expect("flatten");
         let indices_arr = Array::from_slice(&all_indices, &[all_indices.len() as i32]);
 
-        // Use scatter_add: add updates to grad_input_flat at indices
         let result_flat = mlx_rs::ops::scatter_add(
             &grad_input_flat,
             &[&indices_arr],
@@ -608,7 +547,6 @@ impl ModuleOps<Self> for Mlx {
             &[0],
         ).expect("scatter_add");
 
-        // Reshape back to NHWC
         let result_nhwc = result_flat.reshape(&[
             n as i32,
             h_padded as i32,
@@ -616,7 +554,6 @@ impl ModuleOps<Self> for Mlx {
             c as i32,
         ]).expect("reshape");
 
-        // Remove padding if present
         let result_unpadded = if pad_h > 0 || pad_w > 0 {
             mlx_rs::ops::slice(
                 &result_nhwc,
@@ -628,9 +565,7 @@ impl ModuleOps<Self> for Mlx {
             result_nhwc
         };
 
-        // Transpose back from NHWC to NCHW
         let output = mlx_rs::ops::transpose_axes(&result_unpadded, &[0, 3, 1, 2]).expect("transpose");
-
         MlxTensorPrimitive::new(output)
     }
 
@@ -640,12 +575,10 @@ impl ModuleOps<Self> for Mlx {
         stride: usize,
         padding: usize,
         _dilation: usize,
+        _ceil_mode: bool,
     ) -> MlxTensorPrimitive {
-        // Burn uses NCL format, MLX uses NLC format
-        // Transpose from [N, C, L] to [N, L, C]
         let x_nlc = mlx_rs::ops::transpose_axes(&x.array, &[0, 2, 1]).expect("transpose");
 
-        // Apply padding if needed (use -inf for max pooling)
         let x_padded = if padding > 0 {
             let pad = padding as i32;
             let neg_inf = Array::from_f32(f32::NEG_INFINITY);
@@ -659,14 +592,11 @@ impl ModuleOps<Self> for Mlx {
             x_nlc
         };
 
-        // Apply pooling using as_strided + max_axes
         let pooled = pool1d_strided(&x_padded, kernel_size, stride, |arr, axes| {
             arr.max_axes(axes, None)
         });
 
-        // Transpose back from [N, L, C] to [N, C, L]
         let output = mlx_rs::ops::transpose_axes(&pooled, &[0, 2, 1]).expect("transpose");
-
         MlxTensorPrimitive::new(output)
     }
 
@@ -676,12 +606,10 @@ impl ModuleOps<Self> for Mlx {
         stride: [usize; 2],
         padding: [usize; 2],
         _dilation: [usize; 2],
+        _ceil_mode: bool,
     ) -> MlxTensorPrimitive {
-        // Burn uses NCHW format, MLX uses NHWC format
-        // Transpose from [N, C, H, W] to [N, H, W, C]
         let x_nhwc = mlx_rs::ops::transpose_axes(&x.array, &[0, 2, 3, 1]).expect("transpose");
 
-        // Apply padding if needed (use -inf for max pooling)
         let x_padded = if padding[0] > 0 || padding[1] > 0 {
             let pad_h = padding[0] as i32;
             let pad_w = padding[1] as i32;
@@ -696,14 +624,11 @@ impl ModuleOps<Self> for Mlx {
             x_nhwc
         };
 
-        // Apply pooling using as_strided + max_axes
         let pooled = pool2d_strided(&x_padded, kernel_size, stride, |arr, axes| {
             arr.max_axes(axes, None)
         });
 
-        // Transpose back from [N, H, W, C] to [N, C, H, W]
         let output = mlx_rs::ops::transpose_axes(&pooled, &[0, 3, 1, 2]).expect("transpose");
-
         MlxTensorPrimitive::new(output)
     }
 
@@ -713,9 +638,9 @@ impl ModuleOps<Self> for Mlx {
         stride: usize,
         padding: usize,
         dilation: usize,
+        _ceil_mode: bool,
     ) -> MaxPool1dWithIndices<Mlx> {
-        let output = Self::max_pool1d(x, kernel_size, stride, padding, dilation);
-        // Create dummy indices (placeholder)
+        let output = Self::max_pool1d(x, kernel_size, stride, padding, dilation, false);
         let indices = MlxTensorPrimitive::new(
             Array::zeros::<i32>(&output.array.shape().iter().map(|&s| s as i32).collect::<Vec<_>>())
                 .expect("zeros")
@@ -729,12 +654,10 @@ impl ModuleOps<Self> for Mlx {
         stride: [usize; 2],
         padding: [usize; 2],
         _dilation: [usize; 2],
+        _ceil_mode: bool,
     ) -> MaxPool2dWithIndices<Mlx> {
-        // Burn uses NCHW format, MLX uses NHWC format
-        // Transpose from [N, C, H, W] to [N, H, W, C]
         let x_nhwc = mlx_rs::ops::transpose_axes(&x.array, &[0, 2, 3, 1]).expect("transpose");
 
-        // Apply padding if needed (use -inf for max pooling)
         let x_padded = if padding[0] > 0 || padding[1] > 0 {
             let pad_h = padding[0] as i32;
             let pad_w = padding[1] as i32;
@@ -749,10 +672,8 @@ impl ModuleOps<Self> for Mlx {
             x_nhwc
         };
 
-        // Get max values and indices
         let (output_nhwc, indices_nhwc) = max_pool2d_with_indices_impl(&x_padded, kernel_size, stride);
 
-        // Transpose back from [N, H, W, C] to [N, C, H, W]
         let output = mlx_rs::ops::transpose_axes(&output_nhwc, &[0, 3, 1, 2]).expect("transpose");
         let indices = mlx_rs::ops::transpose_axes(&indices_nhwc, &[0, 3, 1, 2]).expect("transpose");
 
@@ -768,12 +689,10 @@ impl ModuleOps<Self> for Mlx {
         _stride: [usize; 2],
         padding: [usize; 2],
         _dilation: [usize; 2],
+        _ceil_mode: bool,
         output_grad: MlxTensorPrimitive,
         indices: MlxTensorPrimitive,
     ) -> MaxPool2dBackward<Mlx> {
-        // The indices contain flat indices into the padded NHWC input tensor.
-        // We need to scatter the gradients to those positions.
-
         let input_shape = x.shape();
         let n = input_shape[0];
         let c = input_shape[1];
@@ -783,23 +702,18 @@ impl ModuleOps<Self> for Mlx {
         let pad_h = padding[0];
         let pad_w = padding[1];
 
-        // Padded dimensions
         let h_padded = h + 2 * pad_h;
         let w_padded = w + 2 * pad_w;
 
-        // Create zeros for padded input gradient (NHWC flattened)
         let total_size = n * h_padded * w_padded * c;
         let grad_input_flat = Array::zeros::<f32>(&[total_size as i32]).expect("zeros");
 
-        // Transpose grad and indices from NCHW to NHWC to match index computation
         let grad_nhwc = mlx_rs::ops::transpose_axes(&output_grad.array, &[0, 2, 3, 1]).expect("transpose");
         let indices_nhwc = mlx_rs::ops::transpose_axes(&indices.array, &[0, 2, 3, 1]).expect("transpose");
 
-        // Flatten both
         let grad_flat = grad_nhwc.flatten(None, None).expect("flatten");
         let indices_flat = indices_nhwc.flatten(None, None).expect("flatten");
 
-        // Scatter the gradients to the positions indicated by indices
         let result_flat = mlx_rs::ops::scatter_add(
             &grad_input_flat,
             &[&indices_flat],
@@ -807,7 +721,6 @@ impl ModuleOps<Self> for Mlx {
             &[0],
         ).expect("scatter_add");
 
-        // Reshape to NHWC
         let result_nhwc = result_flat.reshape(&[
             n as i32,
             h_padded as i32,
@@ -815,7 +728,6 @@ impl ModuleOps<Self> for Mlx {
             c as i32,
         ]).expect("reshape");
 
-        // Remove padding if present
         let result_unpadded = if pad_h > 0 || pad_w > 0 {
             mlx_rs::ops::slice(
                 &result_nhwc,
@@ -827,18 +739,15 @@ impl ModuleOps<Self> for Mlx {
             result_nhwc
         };
 
-        // Transpose back from NHWC to NCHW
         let output = mlx_rs::ops::transpose_axes(&result_unpadded, &[0, 3, 1, 2]).expect("transpose");
-
         MaxPool2dBackward::new(MlxTensorPrimitive::new(output))
     }
 
     fn adaptive_avg_pool1d(x: MlxTensorPrimitive, output_size: usize) -> MlxTensorPrimitive {
-        // Calculate kernel_size and stride to achieve output_size
         let input_size = x.shape()[2];
         let stride = input_size / output_size;
         let kernel_size = input_size - (output_size - 1) * stride;
-        Self::avg_pool1d(x, kernel_size, stride, 0, true)
+        Self::avg_pool1d(x, kernel_size, stride, 0, true, false)
     }
 
     fn adaptive_avg_pool2d(x: MlxTensorPrimitive, output_size: [usize; 2]) -> MlxTensorPrimitive {
@@ -851,14 +760,13 @@ impl ModuleOps<Self> for Mlx {
         let kernel_h = input_h - (output_size[0] - 1) * stride_h;
         let kernel_w = input_w - (output_size[1] - 1) * stride_w;
 
-        Self::avg_pool2d(x, [kernel_h, kernel_w], [stride_h, stride_w], [0, 0], true)
+        Self::avg_pool2d(x, [kernel_h, kernel_w], [stride_h, stride_w], [0, 0], true, false)
     }
 
     fn adaptive_avg_pool2d_backward(
         x: MlxTensorPrimitive,
         _grad: MlxTensorPrimitive,
     ) -> MlxTensorPrimitive {
-        // Placeholder: return zeros with input shape
         let shape: Vec<i32> = x.shape().iter().map(|&s| s as i32).collect();
         let output = Array::zeros::<f32>(&shape).expect("zeros");
         MlxTensorPrimitive::new(output)
@@ -869,7 +777,6 @@ impl ModuleOps<Self> for Mlx {
         _output_size: [usize; 2],
         _options: InterpolateOptions,
     ) -> MlxTensorPrimitive {
-        // MLX doesn't have direct interpolate - placeholder
         x
     }
 
@@ -879,7 +786,6 @@ impl ModuleOps<Self> for Mlx {
         _output_size: [usize; 2],
         _options: InterpolateOptions,
     ) -> MlxTensorPrimitive {
-        // Placeholder: return zeros with input shape
         let shape: Vec<i32> = x.shape().iter().map(|&s| s as i32).collect();
         let output = Array::zeros::<f32>(&shape).expect("zeros");
         MlxTensorPrimitive::new(output)
@@ -889,7 +795,6 @@ impl ModuleOps<Self> for Mlx {
         weights: MlxTensorPrimitive,
         indices: MlxTensorPrimitive,
     ) -> MlxTensorPrimitive {
-        // Embedding lookup - gather rows from weights based on indices
         let array = take_axis(&weights.array, &indices.array, 0)
             .expect("embedding");
         MlxTensorPrimitive::new(array)
@@ -900,8 +805,6 @@ impl ModuleOps<Self> for Mlx {
         _output_grad: MlxTensorPrimitive,
         _indices: MlxTensorPrimitive,
     ) -> MlxTensorPrimitive {
-        // Scatter gradients back to weights
-        // Placeholder - proper implementation needed
         weights
     }
 }

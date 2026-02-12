@@ -1,9 +1,8 @@
 //! Float tensor operations for MLX backend.
 
-use burn_tensor::{ops::FloatTensorOps, Distribution, FloatDType, Shape, TensorData};
+use burn_tensor::{backend::ExecutionError, ops::FloatTensorOps, Distribution, FloatDType, Shape, Slice, TensorData};
 use mlx_rs::Array;
 use mlx_rs::ops::indexing::{take_axis, take_along_axis};
-use std::ops::Range;
 
 use crate::backend::{Mlx, MlxTensorPrimitive};
 use crate::device::MlxDevice;
@@ -61,11 +60,11 @@ impl FloatTensorOps<Self> for Mlx {
         MlxTensorPrimitive::new(array)
     }
 
-    async fn float_into_data(tensor: MlxTensorPrimitive) -> TensorData {
+    async fn float_into_data(tensor: MlxTensorPrimitive) -> Result<TensorData, ExecutionError> {
         tensor.array.eval().expect("Failed to evaluate tensor");
         let shape = tensor.shape().to_vec();
         let data: Vec<f32> = tensor.array.as_slice().to_vec();
-        TensorData::new(data, shape)
+        Ok(TensorData::new(data, shape))
     }
 
     fn float_device(tensor: &MlxTensorPrimitive) -> MlxDevice {
@@ -78,7 +77,7 @@ impl FloatTensorOps<Self> for Mlx {
         tensor
     }
 
-    fn float_empty(shape: Shape, device: &MlxDevice) -> MlxTensorPrimitive {
+    fn float_empty(shape: Shape, device: &MlxDevice, _dtype: FloatDType) -> MlxTensorPrimitive {
         let mlx_device = device.to_mlx_device();
         mlx_rs::Device::set_default(&mlx_device);
 
@@ -203,15 +202,14 @@ impl FloatTensorOps<Self> for Mlx {
         MlxTensorPrimitive::new(array)
     }
 
-    fn float_scatter(
+    fn float_scatter_add(
         dim: usize,
         tensor: MlxTensorPrimitive,
         indices: MlxTensorPrimitive,
         value: MlxTensorPrimitive,
     ) -> MlxTensorPrimitive {
-        // Use put_along_axis for scatter operation
         let array = tensor.array.put_along_axis(&indices.array, &value.array, dim as i32)
-            .expect("Failed to scatter");
+            .expect("Failed to scatter_add");
         MlxTensorPrimitive::new(array)
     }
 
@@ -225,21 +223,27 @@ impl FloatTensorOps<Self> for Mlx {
         MlxTensorPrimitive::new(array)
     }
 
-    fn float_select_assign(
+    fn float_select_add(
         tensor: MlxTensorPrimitive,
         dim: usize,
         indices: MlxTensorPrimitive,
         value: MlxTensorPrimitive,
     ) -> MlxTensorPrimitive {
-        // Use put_along_axis for select_assign operation
         let array = tensor.array.put_along_axis(&indices.array, &value.array, dim as i32)
-            .expect("Failed to select_assign");
+            .expect("Failed to select_add");
         MlxTensorPrimitive::new(array)
     }
 
-    fn float_slice(tensor: MlxTensorPrimitive, ranges: &[Range<usize>]) -> MlxTensorPrimitive {
-        let starts: Vec<i32> = ranges.iter().map(|r| r.start as i32).collect();
-        let stops: Vec<i32> = ranges.iter().map(|r| r.end as i32).collect();
+    fn float_slice(tensor: MlxTensorPrimitive, slices: &[Slice]) -> MlxTensorPrimitive {
+        let shape = tensor.shape().to_vec();
+        let starts: Vec<i32> = slices.iter().enumerate().map(|(i, s)| {
+            let range = s.to_range(*shape.get(i).unwrap_or(&0));
+            range.start as i32
+        }).collect();
+        let stops: Vec<i32> = slices.iter().enumerate().map(|(i, s)| {
+            let range = s.to_range(*shape.get(i).unwrap_or(&0));
+            range.end as i32
+        }).collect();
         let array = mlx_rs::ops::slice(&tensor.array, &starts, &stops, None)
             .expect("Failed to slice");
         MlxTensorPrimitive::new(array)
@@ -247,11 +251,18 @@ impl FloatTensorOps<Self> for Mlx {
 
     fn float_slice_assign(
         tensor: MlxTensorPrimitive,
-        ranges: &[Range<usize>],
+        slices: &[Slice],
         value: MlxTensorPrimitive,
     ) -> MlxTensorPrimitive {
-        let starts: Vec<i32> = ranges.iter().map(|r| r.start as i32).collect();
-        let stops: Vec<i32> = ranges.iter().map(|r| r.end as i32).collect();
+        let shape = tensor.shape().to_vec();
+        let starts: Vec<i32> = slices.iter().enumerate().map(|(i, s)| {
+            let range = s.to_range(*shape.get(i).unwrap_or(&0));
+            range.start as i32
+        }).collect();
+        let stops: Vec<i32> = slices.iter().enumerate().map(|(i, s)| {
+            let range = s.to_range(*shape.get(i).unwrap_or(&0));
+            range.end as i32
+        }).collect();
         let array = mlx_rs::ops::slice_update(&tensor.array, &value.array, &starts, &stops, None)
             .expect("Failed to slice_assign");
         MlxTensorPrimitive::new(array)
@@ -389,6 +400,10 @@ impl FloatTensorOps<Self> for Mlx {
     }
 
     fn float_powf_scalar(tensor: MlxTensorPrimitive, value: f32) -> MlxTensorPrimitive {
+        Self::float_powf_scalar_impl(tensor, value)
+    }
+
+    fn float_powf_scalar_impl(tensor: MlxTensorPrimitive, value: f32) -> MlxTensorPrimitive {
         let scalar = Array::from_f32(value);
         let array = mlx_rs::ops::power(&tensor.array, &scalar).expect("Failed to powf_scalar");
         MlxTensorPrimitive::new(array)
@@ -546,7 +561,6 @@ impl FloatTensorOps<Self> for Mlx {
 
     fn float_sort(tensor: MlxTensorPrimitive, dim: usize, _descending: bool) -> MlxTensorPrimitive {
         let sorted = mlx_rs::ops::sort_axis(&tensor.array, dim as i32).expect("Failed to sort");
-        // Note: MLX sort is ascending only; descending would need flip
         MlxTensorPrimitive::new(sorted)
     }
 
@@ -589,6 +603,159 @@ impl FloatTensorOps<Self> for Mlx {
 
     fn float_ceil(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
         let array = mlx_rs::ops::ceil(&tensor.array).expect("Failed to ceil");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_trunc(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        // trunc(x) = sign(x) * floor(abs(x))
+        let abs_val = mlx_rs::ops::abs(&tensor.array).expect("abs");
+        let floored = mlx_rs::ops::floor(&abs_val).expect("floor");
+        let sign_val = mlx_rs::ops::sign(&tensor.array).expect("sign");
+        let array = mlx_rs::ops::multiply(&sign_val, &floored).expect("multiply");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_tan(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::tan(&tensor.array).expect("Failed to tan");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_cosh(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::cosh(&tensor.array).expect("Failed to cosh");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_sinh(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::sinh(&tensor.array).expect("Failed to sinh");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_acos(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::acos(&tensor.array).expect("Failed to acos");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_acosh(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::acosh(&tensor.array).expect("Failed to acosh");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_asin(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::asin(&tensor.array).expect("Failed to asin");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_asinh(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::asinh(&tensor.array).expect("Failed to asinh");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_atan(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::atan(&tensor.array).expect("Failed to atan");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_atanh(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::atanh(&tensor.array).expect("Failed to atanh");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_atan2(lhs: MlxTensorPrimitive, rhs: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::atan2(&lhs.array, &rhs.array).expect("Failed to atan2");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_cross(
+        lhs: MlxTensorPrimitive,
+        rhs: MlxTensorPrimitive,
+        dim: usize,
+    ) -> MlxTensorPrimitive {
+        // Cross product implementation: a x b
+        // For vectors of length 3 along the given dimension:
+        // result[0] = a[1]*b[2] - a[2]*b[1]
+        // result[1] = a[2]*b[0] - a[0]*b[2]
+        // result[2] = a[0]*b[1] - a[1]*b[0]
+        let dim_i32 = dim as i32;
+
+        let a0 = take_axis(&lhs.array, &Array::from_int(0), dim_i32).expect("take");
+        let a1 = take_axis(&lhs.array, &Array::from_int(1), dim_i32).expect("take");
+        let a2 = take_axis(&lhs.array, &Array::from_int(2), dim_i32).expect("take");
+
+        let b0 = take_axis(&rhs.array, &Array::from_int(0), dim_i32).expect("take");
+        let b1 = take_axis(&rhs.array, &Array::from_int(1), dim_i32).expect("take");
+        let b2 = take_axis(&rhs.array, &Array::from_int(2), dim_i32).expect("take");
+
+        let r0 = mlx_rs::ops::subtract(
+            &mlx_rs::ops::multiply(&a1, &b2).expect("mul"),
+            &mlx_rs::ops::multiply(&a2, &b1).expect("mul"),
+        ).expect("sub");
+        let r1 = mlx_rs::ops::subtract(
+            &mlx_rs::ops::multiply(&a2, &b0).expect("mul"),
+            &mlx_rs::ops::multiply(&a0, &b2).expect("mul"),
+        ).expect("sub");
+        let r2 = mlx_rs::ops::subtract(
+            &mlx_rs::ops::multiply(&a0, &b1).expect("mul"),
+            &mlx_rs::ops::multiply(&a1, &b0).expect("mul"),
+        ).expect("sub");
+
+        // Stack along the target dimension
+        let array = mlx_rs::ops::stack_axis(&[&r0, &r1, &r2], dim_i32).expect("stack");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_cumsum(tensor: MlxTensorPrimitive, dim: usize) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::cumsum(&tensor.array, dim as i32, None, None)
+            .expect("Failed to cumsum");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_cumprod(tensor: MlxTensorPrimitive, dim: usize) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::cumprod(&tensor.array, dim as i32, None, None)
+            .expect("Failed to cumprod");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_cummin(tensor: MlxTensorPrimitive, dim: usize) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::cummin(&tensor.array, dim as i32, None, None)
+            .expect("Failed to cummin");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_cummax(tensor: MlxTensorPrimitive, dim: usize) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::cummax(&tensor.array, dim as i32, None, None)
+            .expect("Failed to cummax");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn float_unfold(
+        tensor: MlxTensorPrimitive,
+        dim: usize,
+        size: usize,
+        step: usize,
+    ) -> MlxTensorPrimitive {
+        // unfold extracts sliding windows of `size` along `dim` with `step`
+        let shape = tensor.shape().to_vec();
+        let dim_size = shape[dim];
+        let num_windows = (dim_size - size) / step + 1;
+
+        // Create indices for each window
+        let mut window_indices = Vec::new();
+        for w in 0..num_windows {
+            let start = w * step;
+            for i in 0..size {
+                window_indices.push((start + i) as i32);
+            }
+        }
+
+        let indices = Array::from_slice(&window_indices, &[(num_windows * size) as i32]);
+        let gathered = take_axis(&tensor.array, &indices, dim as i32).expect("take");
+
+        // Reshape to insert the window dimension
+        let mut new_shape: Vec<i32> = shape.iter().map(|&s| s as i32).collect();
+        new_shape[dim] = num_windows as i32;
+        new_shape.push(size as i32);
+        let array = gathered.reshape(&new_shape).expect("reshape");
+
         MlxTensorPrimitive::new(array)
     }
 }

@@ -1,9 +1,10 @@
 //! Additional ops implementations for MLX backend.
 
 use burn_tensor::{
+    backend::ExecutionError,
     ops::{ActivationOps, QTensorOps, TransactionOps},
-    quantization::QuantizationScheme,
-    Shape, TensorData,
+    quantization::QuantScheme,
+    Shape, Slice, TensorData,
 };
 use mlx_rs::Array;
 
@@ -64,8 +65,7 @@ impl ActivationOps<Self> for Mlx {
         MlxTensorPrimitive::new(array)
     }
 
-    fn gelu_backward(x: MlxTensorPrimitive, grad: MlxTensorPrimitive) -> MlxTensorPrimitive {
-        // Backward pass for GELU - placeholder
+    fn gelu_backward(_x: MlxTensorPrimitive, grad: MlxTensorPrimitive) -> MlxTensorPrimitive {
         grad
     }
 
@@ -87,18 +87,18 @@ impl QTensorOps<Self> for Mlx {
         );
         MlxQuantizedTensorPrimitive {
             tensor,
-            scheme: crate::backend::QuantizationScheme::None,
+            scheme: QuantScheme::default(),
         }
     }
 
     fn quantize(
         tensor: MlxTensorPrimitive,
-        scheme: &QuantizationScheme,
-        qparams: burn_tensor::quantization::QuantizationParametersPrimitive<Self>,
+        _scheme: &QuantScheme,
+        _qparams: burn_tensor::quantization::QuantizationParametersPrimitive<Self>,
     ) -> MlxQuantizedTensorPrimitive {
         MlxQuantizedTensorPrimitive {
             tensor,
-            scheme: crate::backend::QuantizationScheme::None,
+            scheme: QuantScheme::default(),
         }
     }
 
@@ -106,13 +106,13 @@ impl QTensorOps<Self> for Mlx {
         tensor.tensor
     }
 
-    fn q_device(tensor: &MlxQuantizedTensorPrimitive) -> MlxDevice {
+    fn q_device(_tensor: &MlxQuantizedTensorPrimitive) -> MlxDevice {
         MlxDevice::Gpu
     }
 
     fn q_to_device(
         tensor: MlxQuantizedTensorPrimitive,
-        device: &MlxDevice,
+        _device: &MlxDevice,
     ) -> MlxQuantizedTensorPrimitive {
         tensor
     }
@@ -128,7 +128,7 @@ impl QTensorOps<Self> for Mlx {
         }
     }
 
-    async fn q_into_data(tensor: MlxQuantizedTensorPrimitive) -> TensorData {
+    async fn q_into_data(tensor: MlxQuantizedTensorPrimitive) -> Result<TensorData, ExecutionError> {
         <Self as burn_tensor::ops::FloatTensorOps<Self>>::float_into_data(tensor.tensor).await
     }
 
@@ -194,11 +194,11 @@ impl QTensorOps<Self> for Mlx {
 
     fn q_slice(
         tensor: MlxQuantizedTensorPrimitive,
-        ranges: &[std::ops::Range<usize>],
+        slices: &[Slice],
     ) -> MlxQuantizedTensorPrimitive {
         let sliced = <Self as burn_tensor::ops::FloatTensorOps<Self>>::float_slice(
             tensor.tensor,
-            ranges,
+            slices,
         );
         MlxQuantizedTensorPrimitive {
             tensor: sliced,
