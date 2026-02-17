@@ -8,6 +8,7 @@ use mlx_rs::Array;
 use mlx_rs::ops::indexing::take_axis;
 
 use crate::backend::{Mlx, MlxTensorPrimitive};
+use crate::element::FloatMlxElement;
 
 /// Helper function to compute pooling using as_strided approach.
 /// This follows the pattern from mlx-rs nn/pooling.rs.
@@ -246,7 +247,7 @@ fn max_pool2d_with_indices_impl(
     (output, flat_indices)
 }
 
-impl ModuleOps<Self> for Mlx {
+impl<F: FloatMlxElement> ModuleOps<Self> for Mlx<F> {
     fn conv1d(
         x: MlxTensorPrimitive,
         weight: MlxTensorPrimitive,
@@ -371,7 +372,7 @@ impl ModuleOps<Self> for Mlx {
         _options: DeformConvOptions<2>,
     ) -> MlxTensorPrimitive {
         let shape = [1i32, 1, 1, 1];
-        let array = Array::zeros::<f32>(&shape).expect("zeros");
+        let array = F::zeros_array(&shape);
         MlxTensorPrimitive::new(array)
     }
 
@@ -383,9 +384,9 @@ impl ModuleOps<Self> for Mlx {
         _bias: Option<MlxTensorPrimitive>,
         _out_grad: MlxTensorPrimitive,
         _options: DeformConvOptions<2>,
-    ) -> DeformConv2dBackward<Mlx> {
+    ) -> DeformConv2dBackward<Mlx<F>> {
         let shape = [1i32, 1, 1, 1];
-        let zeros = MlxTensorPrimitive::new(Array::zeros::<f32>(&shape).expect("zeros"));
+        let zeros = MlxTensorPrimitive::new(F::zeros_array(&shape));
         DeformConv2dBackward::new(
             zeros.clone(),
             zeros.clone(),
@@ -490,15 +491,15 @@ impl ModuleOps<Self> for Mlx {
 
         let grad_nhwc = mlx_rs::ops::transpose_axes(&grad.array, &[0, 2, 3, 1]).expect("transpose");
 
-        let scale = Array::from_f32(1.0 / pool_size);
+        let scale = F::f64_scalar_array(1.0 / pool_size as f64);
         let grad_scaled = mlx_rs::ops::multiply(&grad_nhwc, &scale).expect("multiply");
 
-        let grad_input_padded = Array::zeros::<f32>(&[
+        let grad_input_padded = F::zeros_array(&[
             n as i32,
             h_padded as i32,
             w_padded as i32,
             c as i32,
-        ]).expect("zeros");
+        ]);
 
         let mut all_indices: Vec<i32> = Vec::with_capacity(n * out_h * out_w * kh * kw * c);
         let mut update_indices: Vec<usize> = Vec::with_capacity(n * out_h * out_w * kh * kw * c);
@@ -581,7 +582,7 @@ impl ModuleOps<Self> for Mlx {
 
         let x_padded = if padding > 0 {
             let pad = padding as i32;
-            let neg_inf = Array::from_f32(f32::NEG_INFINITY);
+            let neg_inf = F::scalar_array(F::neg_infinity());
             mlx_rs::ops::pad(
                 &x_nlc,
                 &[(0, 0), (pad, pad), (0, 0)],
@@ -613,7 +614,7 @@ impl ModuleOps<Self> for Mlx {
         let x_padded = if padding[0] > 0 || padding[1] > 0 {
             let pad_h = padding[0] as i32;
             let pad_w = padding[1] as i32;
-            let neg_inf = Array::from_f32(f32::NEG_INFINITY);
+            let neg_inf = F::scalar_array(F::neg_infinity());
             mlx_rs::ops::pad(
                 &x_nhwc,
                 &[(0, 0), (pad_h, pad_h), (pad_w, pad_w), (0, 0)],
@@ -639,7 +640,7 @@ impl ModuleOps<Self> for Mlx {
         padding: usize,
         dilation: usize,
         _ceil_mode: bool,
-    ) -> MaxPool1dWithIndices<Mlx> {
+    ) -> MaxPool1dWithIndices<Mlx<F>> {
         let output = Self::max_pool1d(x, kernel_size, stride, padding, dilation, false);
         let indices = MlxTensorPrimitive::new(
             Array::zeros::<i32>(&output.array.shape().iter().map(|&s| s as i32).collect::<Vec<_>>())
@@ -655,13 +656,13 @@ impl ModuleOps<Self> for Mlx {
         padding: [usize; 2],
         _dilation: [usize; 2],
         _ceil_mode: bool,
-    ) -> MaxPool2dWithIndices<Mlx> {
+    ) -> MaxPool2dWithIndices<Mlx<F>> {
         let x_nhwc = mlx_rs::ops::transpose_axes(&x.array, &[0, 2, 3, 1]).expect("transpose");
 
         let x_padded = if padding[0] > 0 || padding[1] > 0 {
             let pad_h = padding[0] as i32;
             let pad_w = padding[1] as i32;
-            let neg_inf = Array::from_f32(f32::NEG_INFINITY);
+            let neg_inf = F::scalar_array(F::neg_infinity());
             mlx_rs::ops::pad(
                 &x_nhwc,
                 &[(0, 0), (pad_h, pad_h), (pad_w, pad_w), (0, 0)],
@@ -692,7 +693,7 @@ impl ModuleOps<Self> for Mlx {
         _ceil_mode: bool,
         output_grad: MlxTensorPrimitive,
         indices: MlxTensorPrimitive,
-    ) -> MaxPool2dBackward<Mlx> {
+    ) -> MaxPool2dBackward<Mlx<F>> {
         let input_shape = x.shape();
         let n = input_shape[0];
         let c = input_shape[1];
@@ -706,7 +707,7 @@ impl ModuleOps<Self> for Mlx {
         let w_padded = w + 2 * pad_w;
 
         let total_size = n * h_padded * w_padded * c;
-        let grad_input_flat = Array::zeros::<f32>(&[total_size as i32]).expect("zeros");
+        let grad_input_flat = F::zeros_array(&[total_size as i32]);
 
         let grad_nhwc = mlx_rs::ops::transpose_axes(&output_grad.array, &[0, 2, 3, 1]).expect("transpose");
         let indices_nhwc = mlx_rs::ops::transpose_axes(&indices.array, &[0, 2, 3, 1]).expect("transpose");
@@ -768,7 +769,7 @@ impl ModuleOps<Self> for Mlx {
         _grad: MlxTensorPrimitive,
     ) -> MlxTensorPrimitive {
         let shape: Vec<i32> = x.shape().iter().map(|&s| s as i32).collect();
-        let output = Array::zeros::<f32>(&shape).expect("zeros");
+        let output = F::zeros_array(&shape);
         MlxTensorPrimitive::new(output)
     }
 
@@ -787,7 +788,7 @@ impl ModuleOps<Self> for Mlx {
         _options: InterpolateOptions,
     ) -> MlxTensorPrimitive {
         let shape: Vec<i32> = x.shape().iter().map(|&s| s as i32).collect();
-        let output = Array::zeros::<f32>(&shape).expect("zeros");
+        let output = F::zeros_array(&shape);
         MlxTensorPrimitive::new(output)
     }
 

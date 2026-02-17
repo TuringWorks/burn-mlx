@@ -4,9 +4,11 @@ use burn_tensor::backend::{Backend, ExecutionError};
 use burn_tensor::{DType, TensorMetadata};
 use burn_tensor::quantization::QuantScheme;
 use mlx_rs::Array;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::device::MlxDevice;
+use crate::element::FloatMlxElement;
 
 // Global seed for random number generation
 static SEED: AtomicU64 = AtomicU64::new(0);
@@ -92,15 +94,52 @@ impl burn_tensor::quantization::QTensorPrimitive for MlxQuantizedTensorPrimitive
     }
 }
 
-/// MLX Backend for Burn.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct Mlx;
+/// MLX Backend for Burn, generic over float precision.
+///
+/// The default float type is `f32`. Use `Mlx<half::f16>` (or the `MlxHalf` alias)
+/// for half-precision inference, which halves memory bandwidth and leverages
+/// Apple Silicon's native f16 support.
+///
+/// # Examples
+///
+/// ```ignore
+/// use burn_mlx::{Mlx, MlxHalf};
+///
+/// // f32 backend (default, same as before)
+/// type Backend32 = Mlx;
+///
+/// // f16 backend for faster inference
+/// type Backend16 = MlxHalf;
+/// ```
+pub struct Mlx<F: FloatMlxElement = f32> {
+    _phantom: PhantomData<F>,
+}
 
-impl Backend for Mlx {
+impl<F: FloatMlxElement> std::fmt::Debug for Mlx<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mlx").finish()
+    }
+}
+
+impl<F: FloatMlxElement> Default for Mlx<F> {
+    fn default() -> Self {
+        Self { _phantom: PhantomData }
+    }
+}
+
+impl<F: FloatMlxElement> Clone for Mlx<F> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<F: FloatMlxElement> Copy for Mlx<F> {}
+
+impl<F: FloatMlxElement> Backend for Mlx<F> {
     type Device = MlxDevice;
 
     type FloatTensorPrimitive = MlxTensorPrimitive;
-    type FloatElem = f32;
+    type FloatElem = F;
 
     type IntTensorPrimitive = MlxTensorPrimitive;
     type IntElem = i32;

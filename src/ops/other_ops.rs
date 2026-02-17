@@ -6,15 +6,15 @@ use burn_tensor::{
     quantization::QuantScheme,
     Shape, Slice, TensorData,
 };
-use mlx_rs::Array;
 
 use crate::backend::{Mlx, MlxQuantizedTensorPrimitive, MlxTensorPrimitive};
 use crate::device::MlxDevice;
+use crate::element::FloatMlxElement;
 
 // ActivationOps - most methods have default implementations
-impl ActivationOps<Self> for Mlx {
+impl<F: FloatMlxElement> ActivationOps<Self> for Mlx<F> {
     fn relu(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
-        let zero = Array::from_f32(0.0);
+        let zero = F::f64_scalar_array(0.0);
         let array = mlx_rs::ops::maximum(&tensor.array, &zero).expect("relu");
         MlxTensorPrimitive::new(array)
     }
@@ -27,25 +27,26 @@ impl ActivationOps<Self> for Mlx {
     fn gelu(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
         // GELU(x) = x * 0.5 * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
         // Simplified: x * sigmoid(1.702 * x)
-        let coef = Array::from_f32(1.702);
+        let coef = F::f64_scalar_array(1.702);
         let scaled = mlx_rs::ops::multiply(&tensor.array, &coef).expect("multiply");
         let sigmoid = mlx_rs::ops::sigmoid(&scaled).expect("sigmoid");
         let array = mlx_rs::ops::multiply(&tensor.array, &sigmoid).expect("multiply");
         MlxTensorPrimitive::new(array)
     }
 
-    fn leaky_relu(tensor: MlxTensorPrimitive, negative_slope: f32) -> MlxTensorPrimitive {
-        let array = mlx_rs::nn::leaky_relu(&tensor.array, negative_slope).expect("leaky_relu");
+    fn leaky_relu(tensor: MlxTensorPrimitive, negative_slope: F) -> MlxTensorPrimitive {
+        let slope_f32 = num_traits::ToPrimitive::to_f32(&negative_slope).unwrap();
+        let array = mlx_rs::nn::leaky_relu(&tensor.array, slope_f32).expect("leaky_relu");
         MlxTensorPrimitive::new(array)
     }
 
-    fn hard_sigmoid(tensor: MlxTensorPrimitive, alpha: f32, beta: f32) -> MlxTensorPrimitive {
-        let alpha_arr = Array::from_f32(alpha);
-        let beta_arr = Array::from_f32(beta);
+    fn hard_sigmoid(tensor: MlxTensorPrimitive, alpha: F, beta: F) -> MlxTensorPrimitive {
+        let alpha_arr = F::scalar_array(alpha);
+        let beta_arr = F::scalar_array(beta);
         let scaled = mlx_rs::ops::multiply(&tensor.array, &alpha_arr).expect("multiply");
         let shifted = mlx_rs::ops::add(&scaled, &beta_arr).expect("add");
-        let zero = Array::from_f32(0.0);
-        let one = Array::from_f32(1.0);
+        let zero = F::f64_scalar_array(0.0);
+        let one = F::f64_scalar_array(1.0);
         let array = mlx_rs::ops::clip(&shifted, (&zero, &one)).expect("clip");
         MlxTensorPrimitive::new(array)
     }
@@ -57,7 +58,7 @@ impl ActivationOps<Self> for Mlx {
     }
 
     fn prelu(tensor: MlxTensorPrimitive, alpha: MlxTensorPrimitive) -> MlxTensorPrimitive {
-        let zero = Array::from_f32(0.0);
+        let zero = F::f64_scalar_array(0.0);
         let pos = mlx_rs::ops::maximum(&tensor.array, &zero).expect("max");
         let neg = mlx_rs::ops::minimum(&tensor.array, &zero).expect("min");
         let scaled_neg = mlx_rs::ops::multiply(&alpha.array, &neg).expect("multiply");
@@ -70,19 +71,19 @@ impl ActivationOps<Self> for Mlx {
     }
 
     fn relu_backward(x: MlxTensorPrimitive, grad: MlxTensorPrimitive) -> MlxTensorPrimitive {
-        let zero = Array::from_f32(0.0);
+        let zero = F::f64_scalar_array(0.0);
         let mask = mlx_rs::ops::gt(&x.array, &zero).expect("greater");
-        let mask_float = mask.as_type::<f32>().expect("cast");
+        let mask_float = F::cast_array(&mask);
         let array = mlx_rs::ops::multiply(&grad.array, &mask_float).expect("multiply");
         MlxTensorPrimitive::new(array)
     }
 }
 
 // QTensorOps - Quantization operations (placeholder)
-impl QTensorOps<Self> for Mlx {
+impl<F: FloatMlxElement> QTensorOps<Self> for Mlx<F> {
     fn q_from_data(data: TensorData, device: &MlxDevice) -> MlxQuantizedTensorPrimitive {
         let tensor = <Self as burn_tensor::ops::FloatTensorOps<Self>>::float_from_data(
-            data.convert::<f32>(),
+            data.convert::<F>(),
             device,
         );
         MlxQuantizedTensorPrimitive {
@@ -222,4 +223,4 @@ impl QTensorOps<Self> for Mlx {
 }
 
 // TransactionOps - transaction batching (default impl)
-impl TransactionOps<Self> for Mlx {}
+impl<F: FloatMlxElement> TransactionOps<Self> for Mlx<F> {}

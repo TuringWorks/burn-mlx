@@ -6,8 +6,9 @@ use mlx_rs::ops::indexing::{take_axis, take_along_axis};
 
 use crate::backend::{Mlx, MlxTensorPrimitive};
 use crate::device::MlxDevice;
+use crate::element::FloatMlxElement;
 
-impl BoolTensorOps<Self> for Mlx {
+impl<F: FloatMlxElement> BoolTensorOps<Self> for Mlx<F> {
     fn bool_from_data(data: TensorData, device: &MlxDevice) -> MlxTensorPrimitive {
         let mlx_device = device.to_mlx_device();
         mlx_rs::Device::set_default(&mlx_device);
@@ -104,7 +105,7 @@ impl BoolTensorOps<Self> for Mlx {
     }
 
     fn bool_into_float(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
-        let array = tensor.array.as_type::<f32>().expect("Failed to cast to float");
+        let array = F::cast_array(&tensor.array);
         MlxTensorPrimitive::new(array)
     }
 

@@ -6,8 +6,9 @@ use mlx_rs::ops::indexing::{argmax_axis, argmin_axis, take_axis, take_along_axis
 
 use crate::backend::{Mlx, MlxTensorPrimitive};
 use crate::device::MlxDevice;
+use crate::element::FloatMlxElement;
 
-impl IntTensorOps<Self> for Mlx {
+impl<F: FloatMlxElement> IntTensorOps<Self> for Mlx<F> {
     fn int_from_data(data: TensorData, device: &MlxDevice) -> MlxTensorPrimitive {
         let mlx_device = device.to_mlx_device();
         mlx_rs::Device::set_default(&mlx_device);
@@ -368,7 +369,7 @@ impl IntTensorOps<Self> for Mlx {
     }
 
     fn int_into_float(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
-        let array = tensor.array.as_type::<f32>().expect("Failed to cast to float");
+        let array = F::cast_array(&tensor.array);
         MlxTensorPrimitive::new(array)
     }
 
@@ -420,9 +421,9 @@ impl IntTensorOps<Self> for Mlx {
     }
 
     fn int_matmul(lhs: MlxTensorPrimitive, rhs: MlxTensorPrimitive) -> MlxTensorPrimitive {
-        // MLX matmul requires float, so cast to f32, matmul, then cast back
-        let lhs_f = lhs.array.as_type::<f32>().expect("cast lhs");
-        let rhs_f = rhs.array.as_type::<f32>().expect("cast rhs");
+        // MLX matmul requires float, so cast to backend float type, matmul, then cast back
+        let lhs_f = F::cast_array(&lhs.array);
+        let rhs_f = F::cast_array(&rhs.array);
         let result = lhs_f.matmul(&rhs_f).expect("matmul");
         let array = result.as_type::<i32>().expect("cast back");
         MlxTensorPrimitive::new(array)
