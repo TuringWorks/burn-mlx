@@ -1,6 +1,6 @@
 //! MLX Backend implementation for Burn.
 
-use burn_tensor::backend::Backend;
+use burn_tensor::backend::{Backend, ExecutionError};
 use burn_tensor::{DType, TensorMetadata};
 use burn_tensor::quantization::QuantScheme;
 use mlx_rs::Array;
@@ -125,6 +125,18 @@ impl Backend for Mlx {
             dtype,
             DType::F32 | DType::F64 | DType::F16 | DType::BF16 | DType::I32 | DType::I64 | DType::Bool
         )
+    }
+
+    fn sync(_device: &Self::Device) -> Result<(), ExecutionError> {
+        let stream = mlx_rs::Stream::default();
+        let status = unsafe { mlx_sys::mlx_synchronize(stream.as_ptr()) };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(ExecutionError::WithContext {
+                reason: "MLX stream synchronization failed".into(),
+            })
+        }
     }
 }
 

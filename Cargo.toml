@@ -29,6 +29,7 @@ autotune = []
 burn = { version = "0.20", default-features = false, features = ["std"] }
 burn-tensor = "0.20"
 mlx-rs = { package = "mlx-rs-burn", version = "0.25.5" }
+mlx-sys = { package = "mlx-sys-burn", version = "0.2" }
 derive-new = "0.7"
 half = { version = "2.4", features = ["num-traits"] }
 num-traits = "0.2"
