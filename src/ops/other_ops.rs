@@ -3,9 +3,7 @@
 use burn_tensor::{
     backend::ExecutionError,
     ops::{ActivationOps, FloatTensorOps, QTensorOps, TransactionOps},
-    quantization::{
-        QuantLevel, QuantScheme, QuantValue, QuantizedBytes,
-    },
+    quantization::{QuantLevel, QuantScheme, QuantValue, QuantizedBytes},
     DType, Shape, Slice, TensorData, TensorPrimitive,
 };
 use mlx_rs::Array;
@@ -132,8 +130,7 @@ impl<F: FloatMlxElement> QTensorOps<Self> for Mlx<F> {
 
         // Re-quantize into MLX's native format
         let (quantized, mlx_scales, mlx_biases) =
-            mlx_rs::ops::quantize(&float_array, group_size, bits)
-                .expect("MLX quantize failed");
+            mlx_rs::ops::quantize(&float_array, group_size, bits).expect("MLX quantize failed");
 
         MlxQuantizedTensorPrimitive {
             quantized,
@@ -156,8 +153,7 @@ impl<F: FloatMlxElement> QTensorOps<Self> for Mlx<F> {
         let shape = tensor.shape.clone();
 
         let (quantized, scales, biases) =
-            mlx_rs::ops::quantize(&tensor.array, group_size, bits)
-                .expect("MLX quantize failed");
+            mlx_rs::ops::quantize(&tensor.array, group_size, bits).expect("MLX quantize failed");
 
         MlxQuantizedTensorPrimitive {
             quantized,
@@ -179,6 +175,8 @@ impl<F: FloatMlxElement> QTensorOps<Self> for Mlx<F> {
             tensor.bits,
         )
         .expect("MLX dequantize failed");
+        // MLX dequantize may return f32 regardless of F; cast to backend's float type.
+        let array = F::cast_array(&array);
         MlxTensorPrimitive::new(array)
     }
 
@@ -196,28 +194,24 @@ impl<F: FloatMlxElement> QTensorOps<Self> for Mlx<F> {
                     rhs_q.bits,
                 )
                 .expect("MLX quantized_matmul failed");
+                // MLX quantized_matmul may return f32; cast to backend's float type.
+                let result = F::cast_array(&result);
                 TensorPrimitive::Float(MlxTensorPrimitive::new(result))
             }
             // quantized x float — dequantize LHS
             (TensorPrimitive::QFloat(lhs_q), TensorPrimitive::Float(rhs_f)) => {
                 let lhs_f = Self::dequantize(lhs_q);
-                TensorPrimitive::Float(
-                    <Self as FloatTensorOps<Self>>::float_matmul(lhs_f, rhs_f),
-                )
+                TensorPrimitive::Float(<Self as FloatTensorOps<Self>>::float_matmul(lhs_f, rhs_f))
             }
             // both quantized — dequantize both
             (TensorPrimitive::QFloat(lhs_q), TensorPrimitive::QFloat(rhs_q)) => {
                 let lhs_f = Self::dequantize(lhs_q);
                 let rhs_f = Self::dequantize(rhs_q);
-                TensorPrimitive::Float(
-                    <Self as FloatTensorOps<Self>>::float_matmul(lhs_f, rhs_f),
-                )
+                TensorPrimitive::Float(<Self as FloatTensorOps<Self>>::float_matmul(lhs_f, rhs_f))
             }
             // both float — standard matmul
             (TensorPrimitive::Float(lhs_f), TensorPrimitive::Float(rhs_f)) => {
-                TensorPrimitive::Float(
-                    <Self as FloatTensorOps<Self>>::float_matmul(lhs_f, rhs_f),
-                )
+                TensorPrimitive::Float(<Self as FloatTensorOps<Self>>::float_matmul(lhs_f, rhs_f))
             }
         }
     }
@@ -260,7 +254,9 @@ impl<F: FloatMlxElement> QTensorOps<Self> for Mlx<F> {
         Self::quantize_dynamic(reshaped, &scheme)
     }
 
-    async fn q_into_data(tensor: MlxQuantizedTensorPrimitive) -> Result<TensorData, ExecutionError> {
+    async fn q_into_data(
+        tensor: MlxQuantizedTensorPrimitive,
+    ) -> Result<TensorData, ExecutionError> {
         let float_tensor = Self::dequantize(tensor);
         <Self as FloatTensorOps<Self>>::float_into_data(float_tensor).await
     }
@@ -300,10 +296,7 @@ impl<F: FloatMlxElement> QTensorOps<Self> for Mlx<F> {
         Self::quantize_dynamic(permuted, &scheme)
     }
 
-    fn q_flip(
-        tensor: MlxQuantizedTensorPrimitive,
-        axes: &[usize],
-    ) -> MlxQuantizedTensorPrimitive {
+    fn q_flip(tensor: MlxQuantizedTensorPrimitive, axes: &[usize]) -> MlxQuantizedTensorPrimitive {
         let scheme = tensor.scheme;
         let float_tensor = Self::dequantize(tensor);
         let flipped = <Self as FloatTensorOps<Self>>::float_flip(float_tensor, axes);
@@ -331,10 +324,7 @@ impl<F: FloatMlxElement> QTensorOps<Self> for Mlx<F> {
         Self::quantize_dynamic(sliced, &scheme)
     }
 
-    fn q_expand(
-        tensor: MlxQuantizedTensorPrimitive,
-        shape: Shape,
-    ) -> MlxQuantizedTensorPrimitive {
+    fn q_expand(tensor: MlxQuantizedTensorPrimitive, shape: Shape) -> MlxQuantizedTensorPrimitive {
         let new_dims: Vec<usize> = shape.dims.to_vec();
         let old = &tensor.shape;
 
