@@ -234,6 +234,26 @@ impl<F: FloatMlxElement> QTensorOps<Self> for Mlx<F> {
     }
 
     fn q_reshape(tensor: MlxQuantizedTensorPrimitive, shape: Shape) -> MlxQuantizedTensorPrimitive {
+        let new_dims: Vec<usize> = shape.dims.to_vec();
+
+        // Fast path: if the last 2 dimensions are unchanged, just update the
+        // logical shape. The underlying quantized/scales/biases arrays remain
+        // valid since they represent the same 2D weight matrix.
+        // This avoids expensive dequant→reshape→requant for trivial unsqueezes
+        // (e.g. [M, N] → [1, M, N]) triggered by nn::Linear::forward.
+        let old = &tensor.shape;
+        if old.len() >= 2
+            && new_dims.len() >= 2
+            && old[old.len() - 2] == new_dims[new_dims.len() - 2]
+            && old[old.len() - 1] == new_dims[new_dims.len() - 1]
+        {
+            return MlxQuantizedTensorPrimitive {
+                shape: new_dims,
+                ..tensor
+            };
+        }
+
+        // Fallback: actual data reshape requires dequant → reshape → requant
         let scheme = tensor.scheme;
         let float_tensor = Self::dequantize(tensor);
         let reshaped = <Self as FloatTensorOps<Self>>::float_reshape(float_tensor, shape);
@@ -250,6 +270,20 @@ impl<F: FloatMlxElement> QTensorOps<Self> for Mlx<F> {
         dim1: usize,
         dim2: usize,
     ) -> MlxQuantizedTensorPrimitive {
+        let ndim = tensor.shape.len();
+
+        // Fast path: swapping within batch/prefix dims (not the last 2) just
+        // updates the logical shape — the underlying quantized arrays are
+        // unaffected. Also handles the trivial dim1 == dim2 case.
+        if ndim >= 2 && dim1 < ndim - 2 && dim2 < ndim - 2 {
+            let mut new_shape = tensor.shape.clone();
+            new_shape.swap(dim1, dim2);
+            return MlxQuantizedTensorPrimitive {
+                shape: new_shape,
+                ..tensor
+            };
+        }
+
         let scheme = tensor.scheme;
         let float_tensor = Self::dequantize(tensor);
         let swapped = <Self as FloatTensorOps<Self>>::float_swap_dims(float_tensor, dim1, dim2);
@@ -301,6 +335,27 @@ impl<F: FloatMlxElement> QTensorOps<Self> for Mlx<F> {
         tensor: MlxQuantizedTensorPrimitive,
         shape: Shape,
     ) -> MlxQuantizedTensorPrimitive {
+        let new_dims: Vec<usize> = shape.dims.to_vec();
+        let old = &tensor.shape;
+
+        // Fast path: if the last 2 dimensions are unchanged and any new prefix
+        // dims are size-1 (broadcast markers), the underlying quantized arrays
+        // don't need modification.
+        if old.len() >= 2
+            && new_dims.len() >= 2
+            && old[old.len() - 2] == new_dims[new_dims.len() - 2]
+            && old[old.len() - 1] == new_dims[new_dims.len() - 1]
+        {
+            // Check that any extra leading dims are size 1
+            let extra = new_dims.len().saturating_sub(old.len());
+            if new_dims[..extra].iter().all(|&d| d == 1) {
+                return MlxQuantizedTensorPrimitive {
+                    shape: new_dims,
+                    ..tensor
+                };
+            }
+        }
+
         let scheme = tensor.scheme;
         let float_tensor = Self::dequantize(tensor);
         let expanded = <Self as FloatTensorOps<Self>>::float_expand(float_tensor, shape);
