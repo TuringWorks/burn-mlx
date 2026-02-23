@@ -65,26 +65,36 @@ impl TensorMetadata for MlxTensorPrimitive {
     }
 }
 
-/// Quantized tensor primitive (placeholder for future implementation).
+/// Quantized tensor primitive storing MLX's native quantized representation.
 #[derive(Debug, Clone)]
 pub struct MlxQuantizedTensorPrimitive {
-    /// The underlying tensor (stored as float for now).
-    pub tensor: MlxTensorPrimitive,
-    /// Quantization scheme.
+    /// Quantized weight values (MLX's packed uint format).
+    pub quantized: Array,
+    /// Per-group scale factors.
+    pub scales: Array,
+    /// Per-group zero-point biases.
+    pub biases: Array,
+    /// Logical tensor shape (e.g. [in_features, out_features]).
+    pub shape: Vec<usize>,
+    /// MLX group size (e.g. 32 or 64).
+    pub group_size: i32,
+    /// Bit width (4 or 8).
+    pub bits: i32,
+    /// Burn quantization scheme (for round-tripping back to Burn format).
     pub scheme: QuantScheme,
 }
 
-// SAFETY: Same as MlxTensorPrimitive
+// SAFETY: Same as MlxTensorPrimitive — MLX uses internal synchronization.
 unsafe impl Send for MlxQuantizedTensorPrimitive {}
 unsafe impl Sync for MlxQuantizedTensorPrimitive {}
 
 impl TensorMetadata for MlxQuantizedTensorPrimitive {
     fn dtype(&self) -> DType {
-        self.tensor.dtype()
+        DType::QFloat(self.scheme)
     }
 
     fn shape(&self) -> burn_tensor::Shape {
-        burn_tensor::Shape::from(self.tensor.shape.clone())
+        burn_tensor::Shape::from(self.shape.clone())
     }
 }
 
