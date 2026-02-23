@@ -32,11 +32,24 @@ impl fmt::Display for MlxDevice {
     }
 }
 
-impl DeviceOps for MlxDevice {
-    fn id(&self) -> burn_tensor::backend::DeviceId {
+impl burn_tensor::backend::Device for MlxDevice {
+    fn from_id(device_id: burn_tensor::backend::DeviceId) -> Self {
+        match device_id.type_id {
+            0 => MlxDevice::Cpu,
+            _ => MlxDevice::Gpu,
+        }
+    }
+
+    fn to_id(&self) -> burn_tensor::backend::DeviceId {
         match self {
             MlxDevice::Cpu => burn_tensor::backend::DeviceId::new(0, 0),
             MlxDevice::Gpu => burn_tensor::backend::DeviceId::new(1, 0),
         }
     }
+
+    fn device_count(_type_id: u16) -> usize {
+        1
+    }
 }
+
+impl DeviceOps for MlxDevice {}

@@ -54,8 +54,14 @@ mod ops;
 // Public exports
 pub use backend::{Mlx, MlxTensorPrimitive, MlxQuantizedTensorPrimitive};
 pub use device::MlxDevice;
-pub use element::MlxElement;
+pub use element::{MlxElement, FloatMlxElement};
 pub use tensor::MlxTensor;
+
+/// Half-precision (f16) MLX backend for faster inference on Apple Silicon.
+pub type MlxHalf = Mlx<half::f16>;
+
+/// BFloat16 MLX backend.
+pub type MlxBf16 = Mlx<half::bf16>;
 
 /// Re-export mlx-rs types for advanced usage.
 pub mod mlx {
@@ -65,7 +71,7 @@ pub mod mlx {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn_tensor::{backend::Backend, Tensor, TensorData, Shape};
+    use burn_tensor::{Tensor, TensorData, Shape};
 
     #[test]
     fn test_device_creation() {
@@ -163,12 +169,13 @@ mod tests {
         );
 
         // Apply avg_pool2d with kernel_size=2, stride=2
-        let pooled = Mlx::avg_pool2d(
+        let pooled = Mlx::<f32>::avg_pool2d(
             x.into_primitive().tensor(),
             [2, 2],
             [2, 2],
             [0, 0],
             true,
+            false,
         );
 
         let shape = pooled.shape();
@@ -189,12 +196,13 @@ mod tests {
         );
 
         // Apply max_pool2d with kernel_size=2, stride=2
-        let pooled = Mlx::max_pool2d(
+        let pooled = Mlx::<f32>::max_pool2d(
             x.into_primitive().tensor(),
             [2, 2],
             [2, 2],
             [0, 0],
             [1, 1],
+            false,
         );
 
         let shape = pooled.shape();
@@ -215,12 +223,13 @@ mod tests {
         );
 
         // Apply max_pool2d_with_indices with kernel_size=2, stride=2
-        let result = Mlx::max_pool2d_with_indices(
+        let result = Mlx::<f32>::max_pool2d_with_indices(
             x.into_primitive().tensor(),
             [2, 2],
             [2, 2],
             [0, 0],
             [1, 1],
+            false,
         );
 
         let output_shape = result.output.shape();
@@ -244,12 +253,13 @@ mod tests {
         );
 
         // Apply avg_pool1d with kernel_size=2, stride=2
-        let pooled = Mlx::avg_pool1d(
+        let pooled = Mlx::<f32>::avg_pool1d(
             x.into_primitive().tensor(),
             2,
             2,
             0,
             true,
+            false,
         );
 
         let shape = pooled.shape();
@@ -270,12 +280,13 @@ mod tests {
         );
 
         // Apply max_pool1d with kernel_size=2, stride=2
-        let pooled = Mlx::max_pool1d(
+        let pooled = Mlx::<f32>::max_pool1d(
             x.into_primitive().tensor(),
             2,
             2,
             0,
             1,
+            false,
         );
 
         let shape = pooled.shape();

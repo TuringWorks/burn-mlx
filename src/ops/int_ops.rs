@@ -1,14 +1,14 @@
 //! Integer tensor operations for MLX backend.
 
-use burn_tensor::{ops::IntTensorOps, Distribution, Shape, TensorData};
+use burn_tensor::{backend::ExecutionError, ops::IntTensorOps, Distribution, IntDType, Shape, Slice, TensorData};
 use mlx_rs::Array;
 use mlx_rs::ops::indexing::{argmax_axis, argmin_axis, take_axis, take_along_axis};
-use std::ops::Range;
 
 use crate::backend::{Mlx, MlxTensorPrimitive};
 use crate::device::MlxDevice;
+use crate::element::FloatMlxElement;
 
-impl IntTensorOps<Self> for Mlx {
+impl<F: FloatMlxElement> IntTensorOps<Self> for Mlx<F> {
     fn int_from_data(data: TensorData, device: &MlxDevice) -> MlxTensorPrimitive {
         let mlx_device = device.to_mlx_device();
         mlx_rs::Device::set_default(&mlx_device);
@@ -20,14 +20,14 @@ impl IntTensorOps<Self> for Mlx {
         MlxTensorPrimitive::new(array)
     }
 
-    async fn int_into_data(tensor: MlxTensorPrimitive) -> TensorData {
+    async fn int_into_data(tensor: MlxTensorPrimitive) -> Result<TensorData, ExecutionError> {
         tensor.array.eval().expect("Failed to evaluate tensor");
         let shape = tensor.shape().to_vec();
         let data: Vec<i32> = tensor.array.as_slice().to_vec();
-        TensorData::new(data, shape)
+        Ok(TensorData::new(data, shape))
     }
 
-    fn int_device(tensor: &MlxTensorPrimitive) -> MlxDevice {
+    fn int_device(_tensor: &MlxTensorPrimitive) -> MlxDevice {
         MlxDevice::Gpu
     }
 
@@ -36,7 +36,7 @@ impl IntTensorOps<Self> for Mlx {
         tensor
     }
 
-    fn int_empty(shape: Shape, device: &MlxDevice) -> MlxTensorPrimitive {
+    fn int_empty(shape: Shape, device: &MlxDevice, _dtype: IntDType) -> MlxTensorPrimitive {
         let mlx_device = device.to_mlx_device();
         mlx_rs::Device::set_default(&mlx_device);
         let shape_i32: Vec<i32> = shape.dims.iter().map(|&s| s as i32).collect();
@@ -44,11 +44,11 @@ impl IntTensorOps<Self> for Mlx {
         MlxTensorPrimitive::new(array)
     }
 
-    fn int_zeros(shape: Shape, device: &MlxDevice) -> MlxTensorPrimitive {
-        Self::int_empty(shape, device)
+    fn int_zeros(shape: Shape, device: &MlxDevice, dtype: IntDType) -> MlxTensorPrimitive {
+        Self::int_empty(shape, device, dtype)
     }
 
-    fn int_ones(shape: Shape, device: &MlxDevice) -> MlxTensorPrimitive {
+    fn int_ones(shape: Shape, device: &MlxDevice, _dtype: IntDType) -> MlxTensorPrimitive {
         let mlx_device = device.to_mlx_device();
         mlx_rs::Device::set_default(&mlx_device);
         let shape_i32: Vec<i32> = shape.dims.iter().map(|&s| s as i32).collect();
@@ -170,9 +170,16 @@ impl IntTensorOps<Self> for Mlx {
         MlxTensorPrimitive::new(array)
     }
 
-    fn int_slice(tensor: MlxTensorPrimitive, ranges: &[Range<usize>]) -> MlxTensorPrimitive {
-        let starts: Vec<i32> = ranges.iter().map(|r| r.start as i32).collect();
-        let stops: Vec<i32> = ranges.iter().map(|r| r.end as i32).collect();
+    fn int_slice(tensor: MlxTensorPrimitive, slices: &[Slice]) -> MlxTensorPrimitive {
+        let shape = tensor.shape().to_vec();
+        let starts: Vec<i32> = slices.iter().enumerate().map(|(i, s)| {
+            let range = s.to_range(*shape.get(i).unwrap_or(&0));
+            range.start as i32
+        }).collect();
+        let stops: Vec<i32> = slices.iter().enumerate().map(|(i, s)| {
+            let range = s.to_range(*shape.get(i).unwrap_or(&0));
+            range.end as i32
+        }).collect();
         let array = mlx_rs::ops::slice(&tensor.array, &starts, &stops, None)
             .expect("Failed to slice");
         MlxTensorPrimitive::new(array)
@@ -180,11 +187,18 @@ impl IntTensorOps<Self> for Mlx {
 
     fn int_slice_assign(
         tensor: MlxTensorPrimitive,
-        ranges: &[Range<usize>],
+        slices: &[Slice],
         value: MlxTensorPrimitive,
     ) -> MlxTensorPrimitive {
-        let starts: Vec<i32> = ranges.iter().map(|r| r.start as i32).collect();
-        let stops: Vec<i32> = ranges.iter().map(|r| r.end as i32).collect();
+        let shape = tensor.shape().to_vec();
+        let starts: Vec<i32> = slices.iter().enumerate().map(|(i, s)| {
+            let range = s.to_range(*shape.get(i).unwrap_or(&0));
+            range.start as i32
+        }).collect();
+        let stops: Vec<i32> = slices.iter().enumerate().map(|(i, s)| {
+            let range = s.to_range(*shape.get(i).unwrap_or(&0));
+            range.end as i32
+        }).collect();
         let array = mlx_rs::ops::slice_update(&tensor.array, &value.array, &starts, &stops, None)
             .expect("Failed to slice_assign");
         MlxTensorPrimitive::new(array)
@@ -215,10 +229,9 @@ impl IntTensorOps<Self> for Mlx {
         MlxTensorPrimitive::new(array)
     }
 
-    fn int_scatter(dim: usize, tensor: MlxTensorPrimitive, indices: MlxTensorPrimitive, value: MlxTensorPrimitive) -> MlxTensorPrimitive {
-        // Use put_along_axis for scatter operation
+    fn int_scatter_add(dim: usize, tensor: MlxTensorPrimitive, indices: MlxTensorPrimitive, value: MlxTensorPrimitive) -> MlxTensorPrimitive {
         let array = tensor.array.put_along_axis(&indices.array, &value.array, dim as i32)
-            .expect("Failed to scatter");
+            .expect("Failed to scatter_add");
         MlxTensorPrimitive::new(array)
     }
 
@@ -227,10 +240,9 @@ impl IntTensorOps<Self> for Mlx {
         MlxTensorPrimitive::new(array)
     }
 
-    fn int_select_assign(tensor: MlxTensorPrimitive, dim: usize, indices: MlxTensorPrimitive, value: MlxTensorPrimitive) -> MlxTensorPrimitive {
-        // Use put_along_axis for select_assign operation
+    fn int_select_add(tensor: MlxTensorPrimitive, dim: usize, indices: MlxTensorPrimitive, value: MlxTensorPrimitive) -> MlxTensorPrimitive {
         let array = tensor.array.put_along_axis(&indices.array, &value.array, dim as i32)
-            .expect("Failed to select_assign");
+            .expect("Failed to select_add");
         MlxTensorPrimitive::new(array)
     }
 
@@ -357,7 +369,7 @@ impl IntTensorOps<Self> for Mlx {
     }
 
     fn int_into_float(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
-        let array = tensor.array.as_type::<f32>().expect("Failed to cast to float");
+        let array = F::cast_array(&tensor.array);
         MlxTensorPrimitive::new(array)
     }
 
@@ -406,5 +418,177 @@ impl IntTensorOps<Self> for Mlx {
     fn int_all_dim(tensor: MlxTensorPrimitive, dim: usize) -> MlxTensorPrimitive {
         let array = mlx_rs::ops::all_axis(&tensor.array, dim as i32, true).expect("Failed to all_dim");
         MlxTensorPrimitive::new(array)
+    }
+
+    fn int_matmul(lhs: MlxTensorPrimitive, rhs: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        // MLX matmul requires float, so cast to backend float type, matmul, then cast back
+        let lhs_f = F::cast_array(&lhs.array);
+        let rhs_f = F::cast_array(&rhs.array);
+        let result = lhs_f.matmul(&rhs_f).expect("matmul");
+        let array = result.as_type::<i32>().expect("cast back");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn int_cast(tensor: MlxTensorPrimitive, dtype: IntDType) -> MlxTensorPrimitive {
+        let array = match dtype {
+            IntDType::I32 => tensor.array.as_type::<i32>().expect("cast to i32"),
+            IntDType::I64 => tensor.array.as_type::<i64>().expect("cast to i64"),
+            IntDType::I16 => tensor.array.as_type::<i16>().expect("cast to i16"),
+            IntDType::I8 => tensor.array.as_type::<i8>().expect("cast to i8"),
+            _ => tensor.array,
+        };
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn int_cumsum(tensor: MlxTensorPrimitive, dim: usize) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::cumsum(&tensor.array, dim as i32, None, None)
+            .expect("Failed to cumsum");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn int_cumprod(tensor: MlxTensorPrimitive, dim: usize) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::cumprod(&tensor.array, dim as i32, None, None)
+            .expect("Failed to cumprod");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn int_cummin(tensor: MlxTensorPrimitive, dim: usize) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::cummin(&tensor.array, dim as i32, None, None)
+            .expect("Failed to cummin");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn int_cummax(tensor: MlxTensorPrimitive, dim: usize) -> MlxTensorPrimitive {
+        let array = mlx_rs::ops::cummax(&tensor.array, dim as i32, None, None)
+            .expect("Failed to cummax");
+        MlxTensorPrimitive::new(array)
+    }
+
+    fn int_unfold(
+        tensor: MlxTensorPrimitive,
+        dim: usize,
+        size: usize,
+        step: usize,
+    ) -> MlxTensorPrimitive {
+        let shape = tensor.shape().to_vec();
+        let dim_size = shape[dim];
+        let num_windows = (dim_size - size) / step + 1;
+
+        let mut window_indices = Vec::new();
+        for w in 0..num_windows {
+            let start = w * step;
+            for i in 0..size {
+                window_indices.push((start + i) as i32);
+            }
+        }
+
+        let indices = Array::from_slice(&window_indices, &[(num_windows * size) as i32]);
+        let gathered = take_axis(&tensor.array, &indices, dim as i32).expect("take");
+
+        let mut new_shape: Vec<i32> = shape.iter().map(|&s| s as i32).collect();
+        new_shape[dim] = num_windows as i32;
+        new_shape.push(size as i32);
+        let array = gathered.reshape(&new_shape).expect("reshape");
+
+        MlxTensorPrimitive::new(array)
+    }
+
+    // Bitwise operations - implemented in software as mlx-rs doesn't expose bitwise ops
+    fn bitwise_and(lhs: MlxTensorPrimitive, rhs: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        lhs.array.eval().expect("eval");
+        rhs.array.eval().expect("eval");
+        let lhs_data: Vec<i32> = lhs.array.as_slice().to_vec();
+        let rhs_data: Vec<i32> = rhs.array.as_slice().to_vec();
+        let result: Vec<i32> = lhs_data.iter().zip(rhs_data.iter()).map(|(a, b)| a & b).collect();
+        let shape: Vec<i32> = lhs.shape().iter().map(|&s| s as i32).collect();
+        MlxTensorPrimitive::new(Array::from_slice(&result, &shape))
+    }
+
+    fn bitwise_and_scalar(lhs: MlxTensorPrimitive, rhs: i32) -> MlxTensorPrimitive {
+        lhs.array.eval().expect("eval");
+        let lhs_data: Vec<i32> = lhs.array.as_slice().to_vec();
+        let result: Vec<i32> = lhs_data.iter().map(|a| a & rhs).collect();
+        let shape: Vec<i32> = lhs.shape().iter().map(|&s| s as i32).collect();
+        MlxTensorPrimitive::new(Array::from_slice(&result, &shape))
+    }
+
+    fn bitwise_or(lhs: MlxTensorPrimitive, rhs: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        lhs.array.eval().expect("eval");
+        rhs.array.eval().expect("eval");
+        let lhs_data: Vec<i32> = lhs.array.as_slice().to_vec();
+        let rhs_data: Vec<i32> = rhs.array.as_slice().to_vec();
+        let result: Vec<i32> = lhs_data.iter().zip(rhs_data.iter()).map(|(a, b)| a | b).collect();
+        let shape: Vec<i32> = lhs.shape().iter().map(|&s| s as i32).collect();
+        MlxTensorPrimitive::new(Array::from_slice(&result, &shape))
+    }
+
+    fn bitwise_or_scalar(lhs: MlxTensorPrimitive, rhs: i32) -> MlxTensorPrimitive {
+        lhs.array.eval().expect("eval");
+        let lhs_data: Vec<i32> = lhs.array.as_slice().to_vec();
+        let result: Vec<i32> = lhs_data.iter().map(|a| a | rhs).collect();
+        let shape: Vec<i32> = lhs.shape().iter().map(|&s| s as i32).collect();
+        MlxTensorPrimitive::new(Array::from_slice(&result, &shape))
+    }
+
+    fn bitwise_xor(lhs: MlxTensorPrimitive, rhs: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        lhs.array.eval().expect("eval");
+        rhs.array.eval().expect("eval");
+        let lhs_data: Vec<i32> = lhs.array.as_slice().to_vec();
+        let rhs_data: Vec<i32> = rhs.array.as_slice().to_vec();
+        let result: Vec<i32> = lhs_data.iter().zip(rhs_data.iter()).map(|(a, b)| a ^ b).collect();
+        let shape: Vec<i32> = lhs.shape().iter().map(|&s| s as i32).collect();
+        MlxTensorPrimitive::new(Array::from_slice(&result, &shape))
+    }
+
+    fn bitwise_xor_scalar(lhs: MlxTensorPrimitive, rhs: i32) -> MlxTensorPrimitive {
+        lhs.array.eval().expect("eval");
+        let lhs_data: Vec<i32> = lhs.array.as_slice().to_vec();
+        let result: Vec<i32> = lhs_data.iter().map(|a| a ^ rhs).collect();
+        let shape: Vec<i32> = lhs.shape().iter().map(|&s| s as i32).collect();
+        MlxTensorPrimitive::new(Array::from_slice(&result, &shape))
+    }
+
+    fn bitwise_not(tensor: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        tensor.array.eval().expect("eval");
+        let data: Vec<i32> = tensor.array.as_slice().to_vec();
+        let result: Vec<i32> = data.iter().map(|a| !a).collect();
+        let shape: Vec<i32> = tensor.shape().iter().map(|&s| s as i32).collect();
+        MlxTensorPrimitive::new(Array::from_slice(&result, &shape))
+    }
+
+    fn bitwise_left_shift(lhs: MlxTensorPrimitive, rhs: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        lhs.array.eval().expect("eval");
+        rhs.array.eval().expect("eval");
+        let lhs_data: Vec<i32> = lhs.array.as_slice().to_vec();
+        let rhs_data: Vec<i32> = rhs.array.as_slice().to_vec();
+        let result: Vec<i32> = lhs_data.iter().zip(rhs_data.iter()).map(|(a, b)| a << b).collect();
+        let shape: Vec<i32> = lhs.shape().iter().map(|&s| s as i32).collect();
+        MlxTensorPrimitive::new(Array::from_slice(&result, &shape))
+    }
+
+    fn bitwise_left_shift_scalar(lhs: MlxTensorPrimitive, rhs: i32) -> MlxTensorPrimitive {
+        lhs.array.eval().expect("eval");
+        let lhs_data: Vec<i32> = lhs.array.as_slice().to_vec();
+        let result: Vec<i32> = lhs_data.iter().map(|a| a << rhs).collect();
+        let shape: Vec<i32> = lhs.shape().iter().map(|&s| s as i32).collect();
+        MlxTensorPrimitive::new(Array::from_slice(&result, &shape))
+    }
+
+    fn bitwise_right_shift(lhs: MlxTensorPrimitive, rhs: MlxTensorPrimitive) -> MlxTensorPrimitive {
+        lhs.array.eval().expect("eval");
+        rhs.array.eval().expect("eval");
+        let lhs_data: Vec<i32> = lhs.array.as_slice().to_vec();
+        let rhs_data: Vec<i32> = rhs.array.as_slice().to_vec();
+        let result: Vec<i32> = lhs_data.iter().zip(rhs_data.iter()).map(|(a, b)| a >> b).collect();
+        let shape: Vec<i32> = lhs.shape().iter().map(|&s| s as i32).collect();
+        MlxTensorPrimitive::new(Array::from_slice(&result, &shape))
+    }
+
+    fn bitwise_right_shift_scalar(lhs: MlxTensorPrimitive, rhs: i32) -> MlxTensorPrimitive {
+        lhs.array.eval().expect("eval");
+        let lhs_data: Vec<i32> = lhs.array.as_slice().to_vec();
+        let result: Vec<i32> = lhs_data.iter().map(|a| a >> rhs).collect();
+        let shape: Vec<i32> = lhs.shape().iter().map(|&s| s as i32).collect();
+        MlxTensorPrimitive::new(Array::from_slice(&result, &shape))
     }
 }

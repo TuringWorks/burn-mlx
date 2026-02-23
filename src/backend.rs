@@ -1,11 +1,14 @@
 //! MLX Backend implementation for Burn.
 
-use burn_tensor::backend::Backend;
-use burn_tensor::TensorMetadata;
+use burn_tensor::backend::{Backend, ExecutionError};
+use burn_tensor::{DType, TensorMetadata};
+use burn_tensor::quantization::QuantScheme;
 use mlx_rs::Array;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::device::MlxDevice;
+use crate::element::FloatMlxElement;
 
 // Global seed for random number generation
 static SEED: AtomicU64 = AtomicU64::new(0);
@@ -43,17 +46,17 @@ unsafe impl Send for MlxTensorPrimitive {}
 unsafe impl Sync for MlxTensorPrimitive {}
 
 impl TensorMetadata for MlxTensorPrimitive {
-    fn dtype(&self) -> burn_tensor::DType {
+    fn dtype(&self) -> DType {
         // Map MLX dtype to Burn dtype
         match self.array.dtype() {
-            mlx_rs::Dtype::Float32 => burn_tensor::DType::F32,
-            mlx_rs::Dtype::Float16 => burn_tensor::DType::F16,
-            mlx_rs::Dtype::Bfloat16 => burn_tensor::DType::BF16,
-            mlx_rs::Dtype::Float64 => burn_tensor::DType::F64,
-            mlx_rs::Dtype::Int32 => burn_tensor::DType::I32,
-            mlx_rs::Dtype::Int64 => burn_tensor::DType::I64,
-            mlx_rs::Dtype::Bool => burn_tensor::DType::Bool,
-            _ => burn_tensor::DType::F32, // Default fallback
+            mlx_rs::Dtype::Float32 => DType::F32,
+            mlx_rs::Dtype::Float16 => DType::F16,
+            mlx_rs::Dtype::Bfloat16 => DType::BF16,
+            mlx_rs::Dtype::Float64 => DType::F64,
+            mlx_rs::Dtype::Int32 => DType::I32,
+            mlx_rs::Dtype::Int64 => DType::I64,
+            mlx_rs::Dtype::Bool => DType::Bool,
+            _ => DType::F32, // Default fallback
         }
     }
 
@@ -62,56 +65,91 @@ impl TensorMetadata for MlxTensorPrimitive {
     }
 }
 
-/// Quantized tensor primitive (placeholder for future implementation).
+/// Quantized tensor primitive storing MLX's native quantized representation.
 #[derive(Debug, Clone)]
 pub struct MlxQuantizedTensorPrimitive {
-    /// The underlying tensor (stored as float for now).
-    pub tensor: MlxTensorPrimitive,
-    /// Quantization scheme.
-    pub scheme: QuantizationScheme,
+    /// Quantized weight values (MLX's packed uint format).
+    pub quantized: Array,
+    /// Per-group scale factors.
+    pub scales: Array,
+    /// Per-group zero-point biases.
+    pub biases: Array,
+    /// Logical tensor shape (e.g. [in_features, out_features]).
+    pub shape: Vec<usize>,
+    /// MLX group size (e.g. 32 or 64).
+    pub group_size: i32,
+    /// Bit width (4 or 8).
+    pub bits: i32,
+    /// Burn quantization scheme (for round-tripping back to Burn format).
+    pub scheme: QuantScheme,
 }
 
-/// Quantization scheme.
-#[derive(Debug, Clone, Copy, Default)]
-pub enum QuantizationScheme {
-    #[default]
-    None,
-}
-
-// SAFETY: Same as MlxTensorPrimitive
+// SAFETY: Same as MlxTensorPrimitive — MLX uses internal synchronization.
 unsafe impl Send for MlxQuantizedTensorPrimitive {}
 unsafe impl Sync for MlxQuantizedTensorPrimitive {}
 
 impl TensorMetadata for MlxQuantizedTensorPrimitive {
-    fn dtype(&self) -> burn_tensor::DType {
-        self.tensor.dtype()
+    fn dtype(&self) -> DType {
+        DType::QFloat(self.scheme)
     }
 
     fn shape(&self) -> burn_tensor::Shape {
-        burn_tensor::Shape::from(self.tensor.shape.clone())
+        burn_tensor::Shape::from(self.shape.clone())
     }
 }
 
 impl burn_tensor::quantization::QTensorPrimitive for MlxQuantizedTensorPrimitive {
-    fn scheme(&self) -> &burn_tensor::quantization::QuantizationScheme {
-        // Return a reference to a static scheme
-        static SYMMETRIC: burn_tensor::quantization::QuantizationScheme =
-            burn_tensor::quantization::QuantizationScheme::PerTensorSymmetric(
-                burn_tensor::quantization::QuantizationType::QInt8,
-            );
-        &SYMMETRIC
+    fn scheme(&self) -> &QuantScheme {
+        &self.scheme
     }
 }
 
-/// MLX Backend for Burn.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct Mlx;
+/// MLX Backend for Burn, generic over float precision.
+///
+/// The default float type is `f32`. Use `Mlx<half::f16>` (or the `MlxHalf` alias)
+/// for half-precision inference, which halves memory bandwidth and leverages
+/// Apple Silicon's native f16 support.
+///
+/// # Examples
+///
+/// ```ignore
+/// use burn_mlx::{Mlx, MlxHalf};
+///
+/// // f32 backend (default, same as before)
+/// type Backend32 = Mlx;
+///
+/// // f16 backend for faster inference
+/// type Backend16 = MlxHalf;
+/// ```
+pub struct Mlx<F: FloatMlxElement = f32> {
+    _phantom: PhantomData<F>,
+}
 
-impl Backend for Mlx {
+impl<F: FloatMlxElement> std::fmt::Debug for Mlx<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mlx").finish()
+    }
+}
+
+impl<F: FloatMlxElement> Default for Mlx<F> {
+    fn default() -> Self {
+        Self { _phantom: PhantomData }
+    }
+}
+
+impl<F: FloatMlxElement> Clone for Mlx<F> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<F: FloatMlxElement> Copy for Mlx<F> {}
+
+impl<F: FloatMlxElement> Backend for Mlx<F> {
     type Device = MlxDevice;
 
     type FloatTensorPrimitive = MlxTensorPrimitive;
-    type FloatElem = f32;
+    type FloatElem = F;
 
     type IntTensorPrimitive = MlxTensorPrimitive;
     type IntElem = i32;
@@ -120,23 +158,34 @@ impl Backend for Mlx {
     type BoolElem = bool;
 
     type QuantizedTensorPrimitive = MlxQuantizedTensorPrimitive;
-    type QuantizedEncoding = i8;
 
-    fn name() -> String {
+    fn name(_device: &Self::Device) -> String {
         "mlx".to_string()
     }
 
-    fn seed(seed: u64) {
+    fn seed(_device: &Self::Device, seed: u64) {
         SEED.store(seed, Ordering::SeqCst);
         // MLX uses its own seeding mechanism
-        mlx_rs::random::seed(seed);
+        let _ = mlx_rs::random::seed(seed);
     }
 
-    fn sync(device: &Self::Device) {
-        // MLX is lazy-evaluated; sync forces evaluation
-        // This is a no-op in MLX as synchronization happens implicitly
-        // when reading tensor values
-        let _ = device;
+    fn supports_dtype(_device: &Self::Device, dtype: DType) -> bool {
+        matches!(
+            dtype,
+            DType::F32 | DType::F64 | DType::F16 | DType::BF16 | DType::I32 | DType::I64 | DType::Bool
+        )
+    }
+
+    fn sync(_device: &Self::Device) -> Result<(), ExecutionError> {
+        let stream = mlx_rs::Stream::default();
+        let status = unsafe { mlx_sys::mlx_synchronize(stream.as_ptr()) };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(ExecutionError::WithContext {
+                reason: "MLX stream synchronization failed".into(),
+            })
+        }
     }
 }
 
